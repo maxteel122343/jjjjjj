@@ -237,6 +237,33 @@ export const App: React.FC = () => {
 
       if (hasUpdated) {
         setInventory(updatedInventory);
+
+        setCustomizationItems((prev) => 
+          prev.map((cItem) => {
+            const guessedId = cItem.originalItemId || (cItem.id.startsWith('item-pub-') ? cItem.id.split('-').slice(2, -1).join('-') : undefined);
+            if (cItem.isPublishedByCreator && guessedId && (!cItem.fileBlobUrl || cItem.fileBlobUrl.startsWith('blob:'))) {
+              const matchingInvItem = updatedInventory.find(inv => inv.id === guessedId);
+              if (matchingInvItem?.fileBlobUrl) {
+                return { ...cItem, fileBlobUrl: matchingInvItem.fileBlobUrl, originalItemId: guessedId };
+              }
+            }
+            return cItem;
+          })
+        );
+
+        setStoreAvatars((prev) => 
+          prev.map((av) => {
+            const guessedId = av.originalItemId || (av.id.startsWith('av-pub-') ? av.id.split('-').slice(2, -1).join('-') : undefined);
+            if (av.isUserPublished && guessedId && (!av.fileBlobUrl || av.fileBlobUrl.startsWith('blob:'))) {
+              const matchingInvItem = updatedInventory.find(inv => inv.id === guessedId);
+              if (matchingInvItem?.fileBlobUrl) {
+                return { ...av, fileBlobUrl: matchingInvItem.fileBlobUrl, originalItemId: guessedId };
+              }
+            }
+            return av;
+          })
+        );
+
         setRooms((prev) =>
           prev.map((room) => {
             const matchingScenario = updatedInventory.find(
@@ -672,6 +699,7 @@ export const App: React.FC = () => {
         owned: true,
         applied: false,
         fileBlobUrl: payload.item.fileBlobUrl,
+        originalItemId: payload.item.id,
         description: payload.description,
       };
       setStoreAvatars((prev) => [newAvatar, ...prev.filter((a) => a.name !== payload.name)]);
@@ -700,8 +728,11 @@ export const App: React.FC = () => {
         isPublishedByCreator: true,
         author: user?.displayName || 'Luzenne',
         fileBlobUrl: payload.item.fileBlobUrl,
+        originalItemId: payload.item.id,
         description: payload.description,
         actions: payload.actions || [],
+        isAvatar: payload.objectType === 'avatar',
+        isAccessory: payload.objectType === 'acessorio',
       };
       setCustomizationItems((prev) => [newCustomItem, ...prev.filter((i) => i.id !== newCustomItem.id)]);
     }

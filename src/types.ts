@@ -270,6 +270,7 @@ export interface CustomizationItem {
   isPublishedByCreator?: boolean;
   author?: string;
   fileBlobUrl?: string;
+  originalItemId?: string;
   isAvatar?: boolean;
   isAccessory?: boolean;
   accessoryAttachment?: AccessoryAttachmentPoint;
@@ -292,6 +293,7 @@ export interface StoreAvatar {
   author?: string;
   isUserPublished?: boolean;
   fileBlobUrl?: string;
+  originalItemId?: string;
 }
 
 export interface AvatarPoseConfig {
