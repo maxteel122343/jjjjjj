@@ -620,6 +620,7 @@ export const App: React.FC = () => {
         description: payload.description,
         publishMode: payload.publishMode,
         fileBlobUrl: payload.item.fileBlobUrl,
+        originalItemId: payload.item.id,
         author: user?.displayName || 'Luzenne',
         associatedAvatarIds: payload.associatedAvatarIds,
         actions: payload.actions,

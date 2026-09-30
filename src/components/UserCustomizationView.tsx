@@ -187,7 +187,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   // Filter items in Inventário
   const filteredInventoryItems = customizationItems.filter((item) => {
     if (!item.owned) return false;
-    const matchesSearch = item.name.toLowerCase().includes(searchQueryInventory.toLowerCase());
+    const matchesSearch = (item.name || '').toLowerCase().includes(searchQueryInventory.toLowerCase());
     if (!matchesSearch) return false;
 
     if (selectedCategory === 'todos') return true;
@@ -196,7 +196,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   });
 
   const filteredUserInventory = userInventory.filter((item) => {
-    const matchesSearch = item.name.toLowerCase().includes(searchQueryInventory.toLowerCase());
+    const matchesSearch = (item.name || '').toLowerCase().includes(searchQueryInventory.toLowerCase());
     if (!matchesSearch) return false;
 
     if (selectedCategory === 'todos') return true;
@@ -210,7 +210,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
 
   // Filter avatars in Loja
   const filteredStoreAvatars = storeAvatars.filter((av) => {
-    const matchesSearch = av.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = (av.name || '').toLowerCase().includes(searchQuery.toLowerCase());
     const matchesTag = !selectedTag || av.tags.includes(selectedTag);
     return matchesSearch && matchesTag;
   });
@@ -219,7 +219,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   const publishedCommunityItems = customizationItems.filter((i) => {
     const isAccessory = i.isAccessory || i.category === 'acessorios';
     if (selectedTag === '#acessorios') return isAccessory;
-    const matchesSearch = i.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = (i.name || '').toLowerCase().includes(searchQuery.toLowerCase());
     return matchesSearch;
   });
 
@@ -753,7 +753,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                 {selectedCategory === 'avatar' && (
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     {storeAvatars
-                      .filter((av) => av.owned && av.name.toLowerCase().includes(searchQueryInventory.toLowerCase()))
+                      .filter((av) => av.owned && (av.name || '').toLowerCase().includes(searchQueryInventory.toLowerCase()))
                       .map((av) => {
                         const isSelectedForPreview = selectedAvatarId === av.id;
                         return (
@@ -961,7 +961,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                       );
                     })}
                   </div>
-                )}}
+                )}
               </div>
             </div>
           ) : activeTab === 'loja' ? (

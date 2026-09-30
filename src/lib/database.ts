@@ -41,6 +41,7 @@ export async function persistStoreItem(
         applied: false,
         description: payload.description,
         fileBlobUrl: payload.fileBlobUrl,
+        originalItemId: payload.originalItemId,
       };
       const filtered = avatars.filter((a) => a.id !== generatedId && a.name !== payload.name);
       const updated = [newAvatar, ...filtered];
@@ -91,6 +92,7 @@ export async function persistStoreItem(
         },
         actions: payload.actions || [],
         activeActionId: payload.actions?.[0]?.id || null,
+        originalItemId: payload.originalItemId,
       };
       const filtered = items.filter((i) => i.id !== generatedId && i.name !== payload.name);
       const updated = [newAccessory, ...filtered];
@@ -114,6 +116,7 @@ export async function persistStoreItem(
         description: payload.description || `Item 3D criado por ${user?.displayName || 'Luzenne'}.`,
         actions: payload.actions || [],
         activeActionId: payload.actions?.[0]?.id || null,
+        originalItemId: payload.originalItemId,
       };
       const filtered = items.filter((i) => i.id !== generatedId && i.name !== payload.name);
       const updated = [newItem, ...filtered];
@@ -141,9 +144,9 @@ export async function persistStoreItem(
         ...(payload.metadata || {}),
         author: user?.displayName || payload.author || 'Luzenne',
         isAccessory: payload.objectType === 'acessorio',
-        accessoryAttachment: payload.accessoryAttachment,
         accessoryTransform: payload.accessoryTransform,
         actions: payload.actions || [],
+        originalItemId: payload.originalItemId,
       },
       is_active: true,
     };
@@ -346,6 +349,7 @@ export async function fetchPublicStoreItems(): Promise<{
             accessoryTransform: row.metadata?.accessoryTransform,
             actions: row.metadata?.actions || [],
             activeActionId: row.metadata?.actions?.[0]?.id || null,
+            originalItemId: row.metadata?.originalItemId,
           });
         }
       }

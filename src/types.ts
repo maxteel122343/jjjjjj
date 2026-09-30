@@ -315,6 +315,7 @@ export type StoreObjectType = 'avatar' | 'acessorio' | 'item' | 'pose' | 'sala' 
 
 export interface PublishItemPayload {
   id?: string;
+  originalItemId?: string;
   name: string;
   objectType: StoreObjectType;
   price: number;
