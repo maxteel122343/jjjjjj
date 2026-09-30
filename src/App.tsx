@@ -41,10 +41,11 @@ import {
   ObjectAction,
   AccessoryAttachmentPoint,
   AccessoryTransform,
+  RoomAccessSlot,
 } from './types';
 import { supabase } from './lib/supabase';
-import { persistStoreItem, persistShowcaseRoom, fetchPublicStoreItems } from './lib/database';
-import { getGlbFile, deleteGlbFile } from './lib/storageIndexedDB';
+import { persistStoreItem, persistShowcaseRoom, fetchPublicStoreItems, recordUserInventoryItem } from './lib/database';
+import { getGlbFile, saveGlbFile, deleteGlbFile } from './lib/storageIndexedDB';
 import { Lightbulb, Sparkles, Maximize2, Minimize2 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -54,17 +55,21 @@ export const App: React.FC = () => {
   const [lobbyRoomIndex, setLobbyRoomIndex] = useState<number>(1);
   const [selectedLobbyRoom, setSelectedLobbyRoom] = useState<RoomData | null>(null);
 
-  // Customization & Shop State (Matching User Images 2 & 3)
+  // Customization & Shop State (Sanitizado para manter apenas itens e avatares reais publicados)
   const [customizationItems, setCustomizationItems] = useState<CustomizationItem[]>(() => {
     const saved = localStorage.getItem('3d_social_creator_customization_items');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed: CustomizationItem[] = JSON.parse(saved);
+        // Filtra apenas itens reais publicados (remove fake mock clothes como hat-1, coat-1, etc.)
+        return parsed.filter(
+          (i) => i.isPublishedByCreator || i.isUserPublished || Boolean(i.fileBlobUrl) || Boolean(i.originalItemId)
+        );
       } catch (e) {
-        return INITIAL_CUSTOMIZATION_ITEMS;
+        return [];
       }
     }
-    return INITIAL_CUSTOMIZATION_ITEMS;
+    return [];
   });
 
   const [storeAvatars, setStoreAvatars] = useState<StoreAvatar[]>(() => {
@@ -72,28 +77,26 @@ export const App: React.FC = () => {
     if (saved) {
       try {
         const parsed: StoreAvatar[] = JSON.parse(saved);
-        const merged = [...parsed];
-        for (const initAv of INITIAL_STORE_AVATARS) {
-          if (!merged.some((a) => a.id === initAv.id)) {
-            merged.push(initAv);
-          }
-        }
-        return merged;
+        // Filtra apenas avatares reais publicados (remove avatares fake de fotos de estoque av-1 a av-6)
+        const real = parsed.filter(
+          (a) => a.isUserPublished || Boolean(a.fileBlobUrl) || Boolean(a.originalItemId) || !a.id.startsWith('av-')
+        );
+        return real;
       } catch (e) {
-        return INITIAL_STORE_AVATARS;
+        return [];
       }
     }
-    return INITIAL_STORE_AVATARS;
+    return [];
   });
 
   const [activeAvatarId, setActiveAvatarId] = useState<string>(() => {
     const saved = localStorage.getItem('3d_social_creator_active_avatar_id');
     if (saved) return saved;
-    return 'av-1';
+    return '';
   });
 
   const activeUserAvatar =
-    storeAvatars.find((a) => a.id === activeAvatarId || a.applied) || storeAvatars[0];
+    storeAvatars.find((a) => a.id === activeAvatarId || a.applied) || storeAvatars[0] || null;
 
   const [avatarPoses, setAvatarPoses] = useState<AvatarPoseConfig[]>(() => {
     const saved = localStorage.getItem('3d_social_creator_poses');
@@ -106,6 +109,22 @@ export const App: React.FC = () => {
     }
     return INITIAL_CUSTOMIZATION_POSES;
   });
+
+  // Room Access Inventory (Slots 1-8 de Acesso Rápido para Rooms)
+  const [roomAccessSlots, setRoomAccessSlots] = useState<RoomAccessSlot[]>(() => {
+    const saved = localStorage.getItem('3d_social_room_access_inventory');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return [];
+  });
+
+  const handleUpdateRoomAccessSlots = (newSlots: RoomAccessSlot[]) => {
+    setRoomAccessSlots(newSlots);
+    localStorage.setItem('3d_social_room_access_inventory', JSON.stringify(newSlots));
+  };
 
   // Rooms State (Room A | Room B | + Nova room)
   const [rooms, setRooms] = useState<RoomEditorState[]>(() => {
@@ -221,67 +240,118 @@ export const App: React.FC = () => {
   // Restore GLB Blob URLs from IndexedDB on page load/refresh (ensuring full persistence)
   useEffect(() => {
     const restoreBlobs = async () => {
-      let hasUpdated = false;
+      // 1. Restore Inventory
+      let invUpdated = false;
       const updatedInventory = await Promise.all(
         inventory.map(async (item) => {
           if (!item.fileBlobUrl || item.fileBlobUrl.startsWith('blob:')) {
             const blob = await getGlbFile(item.id);
             if (blob) {
-              hasUpdated = true;
+              invUpdated = true;
               return { ...item, fileBlobUrl: URL.createObjectURL(blob) };
             }
           }
           return item;
         })
       );
-
-      if (hasUpdated) {
+      if (invUpdated) {
         setInventory(updatedInventory);
-
-        setCustomizationItems((prev) => 
-          prev.map((cItem) => {
-            const guessedId = cItem.originalItemId || (cItem.id.startsWith('item-pub-') ? cItem.id.split('-').slice(2, -1).join('-') : undefined);
-            if (cItem.isPublishedByCreator && guessedId && (!cItem.fileBlobUrl || cItem.fileBlobUrl.startsWith('blob:'))) {
-              const matchingInvItem = updatedInventory.find(inv => inv.id === guessedId);
-              if (matchingInvItem?.fileBlobUrl) {
-                return { ...cItem, fileBlobUrl: matchingInvItem.fileBlobUrl, originalItemId: guessedId };
-              }
-            }
-            return cItem;
-          })
-        );
-
-        setStoreAvatars((prev) => 
-          prev.map((av) => {
-            const guessedId = av.originalItemId || (av.id.startsWith('av-pub-') ? av.id.split('-').slice(2, -1).join('-') : undefined);
-            if (av.isUserPublished && guessedId && (!av.fileBlobUrl || av.fileBlobUrl.startsWith('blob:'))) {
-              const matchingInvItem = updatedInventory.find(inv => inv.id === guessedId);
-              if (matchingInvItem?.fileBlobUrl) {
-                return { ...av, fileBlobUrl: matchingInvItem.fileBlobUrl, originalItemId: guessedId };
-              }
-            }
-            return av;
-          })
-        );
-
-        setRooms((prev) =>
-          prev.map((room) => {
-            const matchingScenario = updatedInventory.find(
-              (i) => i.id === room.sceneAssetId
-            );
-            return {
-              ...room,
-              sceneAssetBlobUrl: matchingScenario?.fileBlobUrl || room.sceneAssetBlobUrl,
-              placedObjects: room.placedObjects.map((obj) => {
-                const matchingItem = updatedInventory.find((i) => i.id === obj.assetId);
-                return matchingItem?.fileBlobUrl
-                  ? { ...obj, fileBlobUrl: matchingItem.fileBlobUrl }
-                  : obj;
-              }),
-            };
-          })
-        );
       }
+
+      // 2. Restore Customization Items (Accessories and Published items)
+      let customUpdated = false;
+      const updatedCustomItems = await Promise.all(
+        customizationItems.map(async (cItem) => {
+          if (!cItem.fileBlobUrl || cItem.fileBlobUrl.startsWith('blob:')) {
+            // A. Try direct cItem.id in IndexedDB
+            let blob = await getGlbFile(cItem.id);
+            // B. Try originalItemId
+            if (!blob && cItem.originalItemId) {
+              blob = await getGlbFile(cItem.originalItemId);
+            }
+            // C. Try extracting id from pub prefix
+            if (!blob && cItem.id.includes('-pub-')) {
+              const parts = cItem.id.split('-pub-');
+              if (parts[1]) {
+                const sub = parts[1].replace(/-\d+$/, '');
+                blob = await getGlbFile(sub);
+              }
+            }
+            // D. Try matching updated inventory
+            if (!blob) {
+              const match = updatedInventory.find(inv => inv.id === cItem.originalItemId || inv.id === cItem.id);
+              if (match?.fileBlobUrl) {
+                customUpdated = true;
+                return { ...cItem, fileBlobUrl: match.fileBlobUrl };
+              }
+            }
+            if (blob) {
+              customUpdated = true;
+              return { ...cItem, fileBlobUrl: URL.createObjectURL(blob) };
+            }
+          }
+          return cItem;
+        })
+      );
+      if (customUpdated) {
+        setCustomizationItems(updatedCustomItems);
+        localStorage.setItem('3d_social_creator_customization_items', JSON.stringify(updatedCustomItems));
+      }
+
+      // 3. Restore Store Avatars
+      let avatarsUpdated = false;
+      const updatedAvatars = await Promise.all(
+        storeAvatars.map(async (av) => {
+          if (!av.fileBlobUrl || av.fileBlobUrl.startsWith('blob:')) {
+            let blob = await getGlbFile(av.id);
+            if (!blob && av.originalItemId) {
+              blob = await getGlbFile(av.originalItemId);
+            }
+            if (!blob && av.id.includes('-pub-')) {
+              const parts = av.id.split('-pub-');
+              if (parts[1]) {
+                const sub = parts[1].replace(/-\d+$/, '');
+                blob = await getGlbFile(sub);
+              }
+            }
+            if (!blob) {
+              const match = updatedInventory.find(inv => inv.id === av.originalItemId || inv.id === av.id);
+              if (match?.fileBlobUrl) {
+                avatarsUpdated = true;
+                return { ...av, fileBlobUrl: match.fileBlobUrl };
+              }
+            }
+            if (blob) {
+              avatarsUpdated = true;
+              return { ...av, fileBlobUrl: URL.createObjectURL(blob) };
+            }
+          }
+          return av;
+        })
+      );
+      if (avatarsUpdated) {
+        setStoreAvatars(updatedAvatars);
+        localStorage.setItem('3d_social_creator_store_avatars', JSON.stringify(updatedAvatars));
+      }
+
+      // 4. Restore Room Scene and Placed Objects
+      setRooms((prev) =>
+        prev.map((room) => {
+          const matchingScenario = updatedInventory.find(
+            (i) => i.id === room.sceneAssetId
+          );
+          return {
+            ...room,
+            sceneAssetBlobUrl: matchingScenario?.fileBlobUrl || room.sceneAssetBlobUrl,
+            placedObjects: room.placedObjects.map((obj) => {
+              const matchingItem = updatedInventory.find((i) => i.id === obj.assetId);
+              return matchingItem?.fileBlobUrl
+                ? { ...obj, fileBlobUrl: matchingItem.fileBlobUrl }
+                : obj;
+            }),
+          };
+        })
+      );
     };
 
     restoreBlobs();
@@ -371,14 +441,70 @@ export const App: React.FC = () => {
   };
 
   const handlePublishPose = (newPose: AvatarPoseConfig) => {
-    setAvatarPoses((prev) => [newPose, ...prev.filter((p) => p.id !== newPose.id)]);
-    showToast(`Pose "${newPose.name}" salva com sucesso!`);
+    setAvatarPoses((prev) => {
+      const updated = [newPose, ...prev.filter((p) => p.id !== newPose.id)];
+      localStorage.setItem('3d_social_creator_poses', JSON.stringify(updated));
+      return updated;
+    });
+
+    setInventory((prev) => {
+      if (prev.some((inv) => inv.id === newPose.id || inv.displayName === newPose.name)) return prev;
+      const newInvPose: InventoryItem = {
+        id: newPose.id,
+        fileName: `${newPose.name}.glb`,
+        displayName: newPose.name,
+        name: newPose.name,
+        thumbUrl: newPose.thumbnailUrl || '',
+        thumbnailUrl: newPose.thumbnailUrl || '',
+        type: 'pose',
+        createdAt: new Date().toLocaleDateString(),
+      };
+      return [newInvPose, ...prev];
+    });
+
+    recordUserInventoryItem(user, {
+      storeItemId: newPose.id,
+      itemName: newPose.name,
+      itemType: 'pose',
+      thumbnailUrl: newPose.thumbnailUrl,
+    });
+
+    showToast(`Pose "${newPose.name}" salva com sucesso no Inventário e na Loja!`);
   };
 
   const handleAcquirePose = (poseId: string) => {
-    setAvatarPoses((prev) =>
-      prev.map((p) => (p.id === poseId ? { ...p, owned: true } : p))
-    );
+    const targetPose = avatarPoses.find((p) => p.id === poseId);
+    setAvatarPoses((prev) => {
+      const updated = prev.map((p) => (p.id === poseId ? { ...p, owned: true } : p));
+      localStorage.setItem('3d_social_creator_poses', JSON.stringify(updated));
+      return updated;
+    });
+
+    if (targetPose) {
+      setInventory((prev) => {
+        if (prev.some((inv) => inv.id === targetPose.id || inv.displayName === targetPose.name)) return prev;
+        const newInvPose: InventoryItem = {
+          id: targetPose.id,
+          fileName: `${targetPose.name}.glb`,
+          displayName: targetPose.name,
+          name: targetPose.name,
+          thumbUrl: targetPose.thumbnailUrl || '',
+          thumbnailUrl: targetPose.thumbnailUrl || '',
+          type: 'pose',
+          createdAt: new Date().toLocaleDateString(),
+        };
+        return [newInvPose, ...prev];
+      });
+
+      recordUserInventoryItem(user, {
+        storeItemId: targetPose.id,
+        itemName: targetPose.name,
+        itemType: 'pose',
+        thumbnailUrl: targetPose.thumbnailUrl,
+      });
+
+      showToast(`Pose "${targetPose.name}" adquirida e adicionada ao seu Inventário!`);
+    }
   };
 
   // Check Supabase session
@@ -425,6 +551,55 @@ export const App: React.FC = () => {
             const idx = merged.findIndex((m) => m.id === p.id);
             if (idx >= 0) merged[idx] = p;
             else merged.unshift(p);
+          }
+          return merged;
+        });
+      }
+
+      // Also ensure creator/room inventory is updated with all real published items and avatars from database
+      const dbInvItems: InventoryItem[] = [];
+      res.avatars.forEach((av) => {
+        dbInvItems.push({
+          id: av.id,
+          fileName: `${av.name}.glb`,
+          displayName: av.name,
+          name: av.name,
+          thumbUrl: av.thumb,
+          thumbnailUrl: av.thumb,
+          type: 'Avatar',
+          fileBlobUrl: av.fileBlobUrl,
+          modelType: 'avatar',
+          createdAt: 'Publicado',
+        });
+      });
+      res.items.forEach((item) => {
+        dbInvItems.push({
+          id: item.id,
+          fileName: `${item.name}.glb`,
+          displayName: item.name,
+          name: item.name,
+          thumbUrl: item.thumb,
+          thumbnailUrl: item.thumb,
+          type: item.isAccessory ? 'Acessorio' : item.category === 'outros' ? 'movel' : 'Item',
+          fileBlobUrl: item.fileBlobUrl,
+          isAccessory: item.isAccessory,
+          accessoryAttachment: item.accessoryAttachment,
+          accessoryTransform: item.accessoryTransform,
+          actions: item.actions,
+          createdAt: 'Publicado',
+        });
+      });
+
+      if (dbInvItems.length > 0) {
+        setInventory((prev) => {
+          const merged = [...prev];
+          for (const di of dbInvItems) {
+            const exIdx = merged.findIndex((m) => m.id === di.id || m.displayName === di.displayName);
+            if (exIdx >= 0) {
+              merged[exIdx] = { ...merged[exIdx], ...di, fileBlobUrl: di.fileBlobUrl || merged[exIdx].fileBlobUrl };
+            } else {
+              merged.push(di);
+            }
           }
           return merged;
         });
@@ -530,6 +705,14 @@ export const App: React.FC = () => {
         };
         return [newInvAvatar, ...prev];
       });
+
+      recordUserInventoryItem(user, {
+        storeItemId: targetAvatar.id,
+        itemName: targetAvatar.name,
+        itemType: 'avatar',
+        thumbnailUrl: targetAvatar.thumb,
+      });
+
       showToast(`Avatar "${targetAvatar.name}" adquirido e adicionado ao seu Inventário!`);
     }
   };
@@ -560,6 +743,14 @@ export const App: React.FC = () => {
         fileBlobUrl: item.fileBlobUrl,
       };
       return [newInv, ...prev];
+    });
+
+    recordUserInventoryItem(user, {
+      storeItemId: item.id,
+      itemCode: item.code,
+      itemName: item.name,
+      itemType: item.isAccessory ? 'acessorio' : item.category || 'item',
+      thumbnailUrl: item.thumb,
     });
   };
 
@@ -652,6 +843,7 @@ export const App: React.FC = () => {
         isPublishedByCreator: true,
         author: user?.displayName || 'Luzenne',
         fileBlobUrl: payload.item.fileBlobUrl,
+        originalItemId: payload.item.id,
         description: payload.description,
         isAccessory: true,
         accessoryAttachment: payload.accessoryAttachment || 'companion_float',
@@ -662,6 +854,21 @@ export const App: React.FC = () => {
         },
         actions: payload.actions || [],
       };
+
+      // Persist blob under newAccessoryItem.id in IndexedDB
+      if (payload.item.fileBlobUrl) {
+        getGlbFile(payload.item.id).then((blob) => {
+          if (blob) {
+            saveGlbFile(newAccessoryItem.id, blob);
+          } else if (payload.item.fileBlobUrl!.startsWith('blob:')) {
+            fetch(payload.item.fileBlobUrl!).then(r => r.blob()).then(blob => {
+              saveGlbFile(newAccessoryItem.id, blob);
+              saveGlbFile(payload.item.id, blob);
+            }).catch(() => {});
+          }
+        });
+      }
+
       setCustomizationItems((prev) => [newAccessoryItem, ...prev.filter((i) => i.id !== newAccessoryItem.id)]);
       showToast(`Acessório "${newAccessoryItem.name}" publicado com sucesso com ${newAccessoryItem.actions?.length || 0} ações configuradas!`);
     } else if (payload.objectType === 'pose') {
@@ -703,6 +910,20 @@ export const App: React.FC = () => {
         originalItemId: payload.item.id,
         description: payload.description,
       };
+
+      if (payload.item.fileBlobUrl) {
+        getGlbFile(payload.item.id).then((blob) => {
+          if (blob) {
+            saveGlbFile(newAvatar.id, blob);
+          } else if (payload.item.fileBlobUrl!.startsWith('blob:')) {
+            fetch(payload.item.fileBlobUrl!).then(r => r.blob()).then(blob => {
+              saveGlbFile(newAvatar.id, blob);
+              saveGlbFile(payload.item.id, blob);
+            }).catch(() => {});
+          }
+        });
+      }
+
       setStoreAvatars((prev) => [newAvatar, ...prev.filter((a) => a.name !== payload.name)]);
     } else if (payload.objectType === 'sala') {
       const roomMatch = rooms.find(
@@ -732,9 +953,23 @@ export const App: React.FC = () => {
         originalItemId: payload.item.id,
         description: payload.description,
         actions: payload.actions || [],
-        isAvatar: payload.objectType === 'avatar',
-        isAccessory: payload.objectType === 'acessorio',
+        isAvatar: (payload.objectType as string) === 'avatar',
+        isAccessory: (payload.objectType as string) === 'acessorio',
       };
+
+      if (payload.item.fileBlobUrl) {
+        getGlbFile(payload.item.id).then((blob) => {
+          if (blob) {
+            saveGlbFile(newCustomItem.id, blob);
+          } else if (payload.item.fileBlobUrl!.startsWith('blob:')) {
+            fetch(payload.item.fileBlobUrl!).then(r => r.blob()).then(blob => {
+              saveGlbFile(newCustomItem.id, blob);
+              saveGlbFile(payload.item.id, blob);
+            }).catch(() => {});
+          }
+        });
+      }
+
       setCustomizationItems((prev) => [newCustomItem, ...prev.filter((i) => i.id !== newCustomItem.id)]);
     }
 
@@ -1715,28 +1950,90 @@ export const App: React.FC = () => {
           onPublishPose={handlePublishPose}
           onAcquirePose={handleAcquirePose}
           onUpdateCustomizationItemTransform={(itemId, transform) => {
-            setCustomizationItems((prev) =>
-              prev.map((it) =>
-                it.id === itemId ? { ...it, accessoryTransform: transform } : it
+            setCustomizationItems((prev) => {
+              const updated = prev.map((it) =>
+                it.id === itemId ? { ...it, accessoryTransform: transform, equipped: true } : it
+              );
+              localStorage.setItem('3d_social_creator_customization_items', JSON.stringify(updated));
+              return updated;
+            });
+
+            // Also synchronize in user inventory
+            setInventory((prev) =>
+              prev.map((inv) =>
+                inv.id === itemId
+                  ? { ...inv, accessoryTransform: transform, isAccessory: true }
+                  : inv
               )
             );
           }}
-          onSaveToInventory={(item) => {
+          onSaveToInventory={(item: any) => {
+            const isAv = Boolean(
+              ('isAvatar' in item && item.isAvatar) ||
+              ('category' in item && (item.category as string) === 'avatar') ||
+              ('rarity' in item && 'tags' in item)
+            );
+            const isPose = Boolean(
+              ('category' in item && (item.category as string) === 'poses') ||
+              ('associatedAvatarIds' in item) ||
+              ('type' in item && (item.type as string) === 'pose')
+            );
+            const isAcc = Boolean(
+              item.isAccessory ||
+              ('category' in item && (item.category as string) === 'acessorios')
+            );
+            const targetId = item.id || `inv-${Date.now()}`;
+            const displayName = item.displayName || item.name || 'Item';
+            const thumb = ('thumb' in item ? item.thumb : 'thumbnailUrl' in item ? item.thumbnailUrl : item.thumbUrl) || '';
+
             const newItem: InventoryItem = {
-              id: `inv-${Date.now()}`,
-              name: item.name || 'Item',
-              type: ('isAvatar' in item && item.isAvatar) || ('category' in item && item.category === 'avatar') ? 'avatar' : ('category' in item && item.category === 'poses') ? 'pose' : 'objeto',
-              thumbnailUrl: item.thumbnailUrl || '',
-              fileBlobUrl: item.fileBlobUrl,
+              id: targetId,
+              fileName: `${displayName.toLowerCase().replace(/\s+/g, '_')}.glb`,
+              displayName,
+              name: displayName,
+              type: isAv ? 'Avatar' : isPose ? 'pose' : isAcc ? 'Acessorio' : 'Item',
+              isAccessory: isAcc,
+              accessoryAttachment: item.accessoryAttachment,
+              accessoryTransform: item.accessoryTransform,
+              actions: item.actions,
+              thumbUrl: thumb,
+              thumbnailUrl: thumb,
+              fileBlobUrl: 'fileBlobUrl' in item ? item.fileBlobUrl : undefined,
+              createdAt: 'Hoje',
             };
-            setInventory((prev) => [newItem, ...prev]);
-            showToast(`${item.name || 'Item'} salvo no seu Inventário (Modo Criação)!`);
+
+            setInventory((prev) => {
+              const idx = prev.findIndex((i) => i.id === newItem.id || i.displayName === newItem.displayName);
+              if (idx >= 0) {
+                const updated = [...prev];
+                updated[idx] = { ...updated[idx], ...newItem };
+                return updated;
+              }
+              return [newItem, ...prev];
+            });
+
+            recordUserInventoryItem(user, {
+              storeItemId: targetId,
+              itemName: displayName,
+              itemType: isAv ? 'avatar' : isPose ? 'pose' : isAcc ? 'acessorio' : 'item',
+              thumbnailUrl: thumb,
+            });
+
+            showToast(`"${displayName}" salvo com persistência no seu Inventário!`);
           }}
           onSyncPublicStoreItems={(items, avatars, posesList) => {
-            if (items.length > 0) setCustomizationItems(items);
-            if (avatars.length > 0) setStoreAvatars(avatars);
+            const realItems = items.filter(
+              (i) => i.isPublishedByCreator || i.isUserPublished || Boolean(i.fileBlobUrl) || Boolean(i.originalItemId)
+            );
+            const realAvatars = avatars.filter(
+              (a) => a.isUserPublished || Boolean(a.fileBlobUrl) || Boolean(a.originalItemId) || !a.id.startsWith('av-')
+            );
+            if (realItems.length > 0) setCustomizationItems(realItems);
+            if (realAvatars.length > 0) setStoreAvatars(realAvatars);
             if (posesList.length > 0) setAvatarPoses(posesList);
           }}
+          roomAccessSlots={roomAccessSlots}
+          onUpdateRoomAccessSlots={handleUpdateRoomAccessSlots}
         />
       )}
 
@@ -1748,6 +2045,8 @@ export const App: React.FC = () => {
           user={user}
           poses={avatarPoses}
           storeAvatars={storeAvatars}
+          roomAccessSlots={roomAccessSlots}
+          onUpdateRoomAccessSlots={handleUpdateRoomAccessSlots}
           onExitToLobby={() => {
             if (selectedLobbyRoom.isPlaytest) {
               setCurrentScreen('editor');
@@ -1755,7 +2054,7 @@ export const App: React.FC = () => {
               setCurrentScreen('lobby');
             }
           }}
-          equippedAccessories={[]}
+          equippedAccessories={customizationItems.filter((i) => i.equipped || i.isAccessory)}
           spotVisualConfig={spotVisualConfig}
         />
       )}

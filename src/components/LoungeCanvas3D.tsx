@@ -11,6 +11,7 @@ import {
   GizmoMode,
   SpotVisualConfig,
   PlacedObject,
+  AccessoryTransform,
 } from '../types';
 import {
   createScarletSalonArchitecture,
@@ -24,7 +25,7 @@ interface LoungeCanvas3DProps {
   currentSpotId: number;
   onSelectSpot: (spotId: number) => void;
   cameraMode: 'orbit' | 'frontal' | 'closeup' | 'topdown';
-  equippedAccessories: string[];
+  equippedAccessories?: any[];
   onUpdateAvatarHeadScreenPos?: (positions: Record<number, { x: number; y: number }>) => void;
   editorRoom?: RoomEditorState;
   showSpotArrows?: boolean;
@@ -535,105 +536,8 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
       scene.add(zackGroup);
     }
 
-    // Center Avatar: Player (customized according to customAvatarObject or activeUserAvatar)
+    // Center Avatar: Player (customized dynamically according to customAvatarObject or activeUserAvatar)
     const playerGroup = new THREE.Group();
-    if (customAvatarObject?.fileBlobUrl) {
-      const gltfLoader = new GLTFLoader();
-      gltfLoader.load(customAvatarObject.fileBlobUrl, (gltf) => {
-        const m = gltf.scene;
-        const box = new THREE.Box3().setFromObject(m);
-        const size = box.getSize(new THREE.Vector3());
-        const targetH = 1.70;
-        const s = targetH / Math.max(0.1, size.y);
-        m.scale.set(s, s, s);
-        const scaledBox = new THREE.Box3().setFromObject(m);
-        const center = scaledBox.getCenter(new THREE.Vector3());
-        m.position.x = -center.x;
-        m.position.z = -center.z;
-        m.position.y = -scaledBox.min.y;
-        m.traverse((child) => {
-          if ((child as THREE.Mesh).isMesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-            child.frustumCulled = false;
-            if ((child as THREE.Mesh).geometry) {
-              (child as THREE.Mesh).geometry.computeBoundingBox();
-              (child as THREE.Mesh).geometry.computeBoundingSphere();
-            }
-          }
-        });
-        playerGroup.add(m);
-      });
-    } else if (customAvatarObject) {
-      if (customAvatarObject.modelType === 'sofa' || customAvatarObject.name.toLowerCase().includes('sofa')) {
-        const sofaGeo = new THREE.BoxGeometry(1.8, 0.5, 0.8);
-        const sofaMat = new THREE.MeshStandardMaterial({ color: 0xd4af37, roughness: 0.6 });
-        const sofaMesh = new THREE.Mesh(sofaGeo, sofaMat);
-        sofaMesh.position.y = 0.25;
-        sofaMesh.frustumCulled = false;
-        playerGroup.add(sofaMesh);
-      } else {
-        const customPlayerMesh = createCharacterMesh({
-          skinColor: 0xcca080,
-          hairColor: 0x1f1b18,
-          clothColor: 0xd4af37,
-          pantsColor: 0x1b1f24,
-          hasGlasses: false,
-          hasGoldChain: true,
-          hairStyle: 'curly',
-        });
-        customPlayerMesh.traverse((n) => {
-          if ((n as THREE.Mesh).isMesh) n.frustumCulled = false;
-        });
-        playerGroup.add(customPlayerMesh);
-      }
-    } else if (activeUserAvatar?.fileBlobUrl) {
-      const gltfLoader = new GLTFLoader();
-      gltfLoader.load(activeUserAvatar.fileBlobUrl, (gltf) => {
-        const m = gltf.scene;
-        const box = new THREE.Box3().setFromObject(m);
-        const size = box.getSize(new THREE.Vector3());
-        const targetH = 1.70;
-        const s = targetH / Math.max(0.1, size.y);
-        m.scale.set(s, s, s);
-        const scaledBox = new THREE.Box3().setFromObject(m);
-        const center = scaledBox.getCenter(new THREE.Vector3());
-        m.position.x = -center.x;
-        m.position.z = -center.z;
-        m.position.y = -scaledBox.min.y;
-        m.traverse((child) => {
-          if ((child as THREE.Mesh).isMesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-            child.frustumCulled = false;
-            if ((child as THREE.Mesh).geometry) {
-              (child as THREE.Mesh).geometry.computeBoundingBox();
-              (child as THREE.Mesh).geometry.computeBoundingSphere();
-            }
-          }
-        });
-        playerGroup.add(m);
-      });
-    } else {
-      const isCyber =
-        activeUserAvatar?.name.toLowerCase().includes('cyber') ||
-        activeUserAvatar?.tags?.includes('#streetwear');
-      const isGala =
-        activeUserAvatar?.name.toLowerCase().includes('gala') ||
-        activeUserAvatar?.tags?.includes('#formal');
-      const isMinimal = activeUserAvatar?.name.toLowerCase().includes('minimal');
-
-      const defaultPlayerMesh = createCharacterMesh({
-        skinColor: 0xcca080,
-        hairColor: 0x1f1b18,
-        clothColor: isCyber ? 0x14b8a6 : isGala ? 0x121316 : isMinimal ? 0xe2ded5 : 0x19191d,
-        pantsColor: isCyber ? 0x1b1f24 : 0x202227,
-        hasGlasses: isCyber || equippedAccessories.includes('sunglasses'),
-        hasGoldChain: isGala || true,
-        hairStyle: 'curly',
-      });
-      playerGroup.add(defaultPlayerMesh);
-    }
     playerGroup.position.set(0, 0.28, 0.2);
     scene.add(playerGroup);
     playerGroupRef.current = playerGroup;
@@ -1149,6 +1053,151 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
     }
   }, [gizmoMode, currentSpotId]);
 
+  // Synchronize Player Avatar 3D Model and Posture dynamically whenever activeUserAvatar, currentPose, customAvatarObject, or equippedAccessories changes
+  useEffect(() => {
+    if (!playerGroupRef.current) return;
+    const playerGroup = playerGroupRef.current;
+
+    // Clear previous avatar meshes from playerGroup
+    while (playerGroup.children.length > 0) {
+      const child = playerGroup.children[0];
+      playerGroup.remove(child);
+      if ((child as any).geometry) (child as any).geometry.dispose();
+    }
+
+    const poseName = (currentPose?.name || '').toLowerCase();
+
+    const applyModelPoseAdjustments = (m: THREE.Group) => {
+      if (poseName.includes('sentar')) {
+        m.position.y -= 0.38;
+      } else if (poseName.includes('deitar') || poseName.includes('reclinad')) {
+        m.rotation.x = -Math.PI / 4.2;
+        m.position.y -= 0.25;
+        m.position.z -= 0.2;
+      } else if (poseName.includes('acenar')) {
+        m.rotation.z = -0.06;
+        m.rotation.y = 0.12;
+      } else if (poseName.includes('rindo')) {
+        m.rotation.x = 0.1;
+        m.rotation.z = -0.03;
+      } else if (poseName.includes('modelo') || poseName.includes('noir')) {
+        m.rotation.y = 0.25;
+        m.rotation.z = 0.04;
+      }
+    };
+
+    if (customAvatarObject?.fileBlobUrl) {
+      const gltfLoader = new GLTFLoader();
+      gltfLoader.load(customAvatarObject.fileBlobUrl, (gltf) => {
+        const m = gltf.scene;
+        const box = new THREE.Box3().setFromObject(m);
+        const size = box.getSize(new THREE.Vector3());
+        const targetH = 1.70;
+        const s = targetH / Math.max(0.1, size.y);
+        m.scale.set(s, s, s);
+        const scaledBox = new THREE.Box3().setFromObject(m);
+        const center = scaledBox.getCenter(new THREE.Vector3());
+        m.position.x = -center.x;
+        m.position.z = -center.z;
+        m.position.y = -scaledBox.min.y;
+        applyModelPoseAdjustments(m);
+        m.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+            child.frustumCulled = false;
+          }
+        });
+        playerGroup.add(m);
+      });
+    } else if (activeUserAvatar?.fileBlobUrl) {
+      const gltfLoader = new GLTFLoader();
+      gltfLoader.load(activeUserAvatar.fileBlobUrl, (gltf) => {
+        const m = gltf.scene;
+        const box = new THREE.Box3().setFromObject(m);
+        const size = box.getSize(new THREE.Vector3());
+        const targetH = 1.70;
+        const s = targetH / Math.max(0.1, size.y);
+        m.scale.set(s, s, s);
+        const scaledBox = new THREE.Box3().setFromObject(m);
+        const center = scaledBox.getCenter(new THREE.Vector3());
+        m.position.x = -center.x;
+        m.position.z = -center.z;
+        m.position.y = -scaledBox.min.y;
+        applyModelPoseAdjustments(m);
+        m.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+            child.frustumCulled = false;
+          }
+        });
+        playerGroup.add(m);
+      });
+    } else {
+      const isCyber =
+        activeUserAvatar?.name?.toLowerCase().includes('cyber') ||
+        activeUserAvatar?.tags?.includes('#streetwear');
+      const isGala =
+        activeUserAvatar?.name?.toLowerCase().includes('gala') ||
+        activeUserAvatar?.tags?.includes('#formal');
+      const isMinimal = activeUserAvatar?.name?.toLowerCase().includes('minimal');
+
+      const defaultPlayerMesh = createCharacterMesh({
+        skinColor: 0xcca080,
+        hairColor: 0x1f1b18,
+        clothColor: isCyber ? 0x14b8a6 : isGala ? 0x121316 : isMinimal ? 0xe2ded5 : 0x19191d,
+        pantsColor: isCyber ? 0x1b1f24 : 0x202227,
+        hasGlasses: isCyber || (Array.isArray(equippedAccessories) && equippedAccessories.some((acc: any) => acc === 'sunglasses' || acc?.id === 'sunglasses')),
+        hasGoldChain: isGala || true,
+        hairStyle: 'curly',
+        currentPose: currentPose?.name || 'Em pé',
+      });
+      playerGroup.add(defaultPlayerMesh);
+    }
+
+    // Attach equipped accessories with their saved transforms to the player avatar
+    if (Array.isArray(equippedAccessories) && equippedAccessories.length > 0) {
+      equippedAccessories.forEach((acc: any) => {
+        if (!acc || typeof acc !== 'object') return;
+        if (!acc.equipped && !acc.isAccessory) return;
+        const accGroup = new THREE.Group();
+        const baseTrans: AccessoryTransform = acc.accessoryTransform || {
+          position: [0.45, 1.45, 0.25],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        };
+        const pos = baseTrans.position || [0.45, 1.45, 0.25];
+        const rot = baseTrans.rotation || [0, 0, 0];
+        const sca = baseTrans.scale || [1, 1, 1];
+        accGroup.position.set(pos[0], pos[1], pos[2]);
+        accGroup.rotation.set(rot[0], rot[1], rot[2]);
+        accGroup.scale.set(sca[0], sca[1], sca[2]);
+
+        if (acc.fileBlobUrl) {
+          const accLoader = new GLTFLoader();
+          accLoader.load(acc.fileBlobUrl, (accGltf) => {
+            const accM = accGltf.scene;
+            const accBox = new THREE.Box3().setFromObject(accM);
+            const accSize = accBox.getSize(new THREE.Vector3());
+            const maxDim = Math.max(accSize.x, accSize.y, accSize.z, 0.05);
+            const s = 0.45 / maxDim;
+            accM.scale.set(s, s, s);
+            accM.traverse((n) => {
+              if ((n as THREE.Mesh).isMesh) {
+                n.castShadow = true;
+                n.receiveShadow = true;
+                n.frustumCulled = false;
+              }
+            });
+            accGroup.add(accM);
+          });
+        }
+        playerGroup.add(accGroup);
+      });
+    }
+  }, [activeUserAvatar, currentPose, customAvatarObject, equippedAccessories]);
+
   // Update spot visual style dynamically on config changes
   useEffect(() => {
     if (!spotAnimatedMeshesRef.current || spotAnimatedMeshesRef.current.length === 0) return;
@@ -1204,8 +1253,15 @@ function createCharacterMesh(options: {
   hasGlasses: boolean;
   hasGoldChain: boolean;
   hairStyle: 'female-long' | 'curly' | 'afro-short';
+  currentPose?: string;
 }) {
   const group = new THREE.Group();
+  const poseName = (options.currentPose || 'Em pé').toLowerCase();
+  const isSeated = poseName.includes('sentar');
+  const isReclined = poseName.includes('deitar') || poseName.includes('reclinad');
+  const isWaving = poseName.includes('acenar');
+  const isLaughing = poseName.includes('rindo');
+  const isModel = poseName.includes('modelo') || poseName.includes('noir');
 
   // Materials
   const skinMat = new THREE.MeshStandardMaterial({
@@ -1267,17 +1323,19 @@ function createCharacterMesh(options: {
   const head = new THREE.Mesh(headGeo, skinMat);
   head.position.set(0, 0.84, 0.02);
   head.castShadow = true;
+  if (isLaughing) {
+    head.rotation.z = 0.12;
+    head.rotation.x = -0.05;
+  }
   group.add(head);
 
   // Hair
   if (options.hairStyle === 'curly') {
-    // Curly volume hair matching Reference 1 center player
     const hairGeo = new THREE.SphereGeometry(0.19, 16, 16);
     const hair = new THREE.Mesh(hairGeo, hairMat);
     hair.position.set(0, 0.9, -0.02);
     group.add(hair);
 
-    // Front curls
     for (let i = -2; i <= 2; i++) {
       const curlGeo = new THREE.SphereGeometry(0.05, 8, 8);
       const curl = new THREE.Mesh(curlGeo, hairMat);
@@ -1285,7 +1343,6 @@ function createCharacterMesh(options: {
       group.add(curl);
     }
   } else if (options.hairStyle === 'female-long') {
-    // Long wavy hair matching Maya
     const topHairGeo = new THREE.SphereGeometry(0.185, 16, 16);
     const topHair = new THREE.Mesh(topHairGeo, hairMat);
     topHair.position.set(0, 0.88, -0.01);
@@ -1296,7 +1353,6 @@ function createCharacterMesh(options: {
     backHair.position.set(0, 0.65, -0.1);
     group.add(backHair);
   } else {
-    // Short afro/fade for Zack
     const afroGeo = new THREE.SphereGeometry(0.185, 16, 16);
     const afro = new THREE.Mesh(afroGeo, hairMat);
     afro.position.set(0, 0.88, 0);
@@ -1316,61 +1372,141 @@ function createCharacterMesh(options: {
     group.add(glasses);
   }
 
-  // Seated Cross-legged / Relaxed Legs on Pouf
-  // Pelvis
-  const pelvisGeo = new THREE.CylinderGeometry(0.2, 0.22, 0.15, 16);
-  const pelvis = new THREE.Mesh(pelvisGeo, pantsMat);
-  pelvis.position.y = 0.14;
-  group.add(pelvis);
+  // Posture Legs & Pelvis
+  if (isSeated) {
+    // Seated Cross-legged / Relaxed Legs on Pouf
+    const pelvisGeo = new THREE.CylinderGeometry(0.2, 0.22, 0.15, 16);
+    const pelvis = new THREE.Mesh(pelvisGeo, pantsMat);
+    pelvis.position.y = 0.14;
+    group.add(pelvis);
 
-  // Left Leg (folded forward/side)
-  const leftThighGeo = new THREE.CylinderGeometry(0.09, 0.08, 0.35, 12);
-  const leftThigh = new THREE.Mesh(leftThighGeo, pantsMat);
-  leftThigh.rotation.set(Math.PI / 2.5, 0, -Math.PI / 4.5);
-  leftThigh.position.set(-0.18, 0.12, 0.18);
-  group.add(leftThigh);
+    const leftThighGeo = new THREE.CylinderGeometry(0.09, 0.08, 0.35, 12);
+    const leftThigh = new THREE.Mesh(leftThighGeo, pantsMat);
+    leftThigh.rotation.set(Math.PI / 2.5, 0, -Math.PI / 4.5);
+    leftThigh.position.set(-0.18, 0.12, 0.18);
+    group.add(leftThigh);
 
-  const leftShinGeo = new THREE.CylinderGeometry(0.075, 0.07, 0.34, 12);
-  const leftShin = new THREE.Mesh(leftShinGeo, pantsMat);
-  leftShin.rotation.set(0, 0, Math.PI / 2.3);
-  leftShin.position.set(-0.08, 0.06, 0.32);
-  group.add(leftShin);
+    const leftShinGeo = new THREE.CylinderGeometry(0.075, 0.07, 0.34, 12);
+    const leftShin = new THREE.Mesh(leftShinGeo, pantsMat);
+    leftShin.rotation.set(0, 0, Math.PI / 2.3);
+    leftShin.position.set(-0.08, 0.06, 0.32);
+    group.add(leftShin);
 
-  // Right Leg (folded forward/side)
-  const rightThighGeo = new THREE.CylinderGeometry(0.09, 0.08, 0.35, 12);
-  const rightThigh = new THREE.Mesh(rightThighGeo, pantsMat);
-  rightThigh.rotation.set(Math.PI / 2.5, 0, Math.PI / 4.5);
-  rightThigh.position.set(0.18, 0.12, 0.18);
-  group.add(rightThigh);
+    const rightThighGeo = new THREE.CylinderGeometry(0.09, 0.08, 0.35, 12);
+    const rightThigh = new THREE.Mesh(rightThighGeo, pantsMat);
+    rightThigh.rotation.set(Math.PI / 2.5, 0, Math.PI / 4.5);
+    rightThigh.position.set(0.18, 0.12, 0.18);
+    group.add(rightThigh);
 
-  const rightShinGeo = new THREE.CylinderGeometry(0.075, 0.07, 0.34, 12);
-  const rightShin = new THREE.Mesh(rightShinGeo, pantsMat);
-  rightShin.rotation.set(0, 0, -Math.PI / 2.3);
-  rightShin.position.set(0.08, 0.06, 0.32);
-  group.add(rightShin);
+    const rightShinGeo = new THREE.CylinderGeometry(0.075, 0.07, 0.34, 12);
+    const rightShin = new THREE.Mesh(rightShinGeo, pantsMat);
+    rightShin.rotation.set(0, 0, -Math.PI / 2.3);
+    rightShin.position.set(0.08, 0.06, 0.32);
+    group.add(rightShin);
 
-  // White sneakers
-  const shoeLeftGeo = new THREE.BoxGeometry(0.1, 0.08, 0.18);
-  const shoeLeft = new THREE.Mesh(shoeLeftGeo, shoeMat);
-  shoeLeft.position.set(-0.25, 0.05, 0.35);
-  group.add(shoeLeft);
+    const shoeLeftGeo = new THREE.BoxGeometry(0.1, 0.08, 0.18);
+    const shoeLeft = new THREE.Mesh(shoeLeftGeo, shoeMat);
+    shoeLeft.position.set(-0.25, 0.05, 0.35);
+    group.add(shoeLeft);
 
-  const shoeRightGeo = new THREE.BoxGeometry(0.1, 0.08, 0.18);
-  const shoeRight = new THREE.Mesh(shoeRightGeo, shoeMat);
-  shoeRight.position.set(0.25, 0.05, 0.35);
-  group.add(shoeRight);
+    const shoeRight = new THREE.Mesh(shoeLeftGeo, shoeMat);
+    shoeRight.position.set(0.25, 0.05, 0.35);
+    group.add(shoeRight);
+  } else if (isReclined) {
+    // Reclined / Lying on lounge
+    group.rotation.x = -Math.PI / 4.5;
+    group.position.y -= 0.15;
+    group.position.z -= 0.2;
 
-  // Arms resting naturally
+    const pelvisGeo = new THREE.CylinderGeometry(0.2, 0.22, 0.15, 16);
+    const pelvis = new THREE.Mesh(pelvisGeo, pantsMat);
+    pelvis.position.y = 0.14;
+    group.add(pelvis);
+
+    const legGeo = new THREE.CylinderGeometry(0.075, 0.065, 0.5, 12);
+    const legL = new THREE.Mesh(legGeo, pantsMat);
+    legL.position.set(-0.1, -0.15, 0.08);
+    legL.rotation.x = 0.2;
+    group.add(legL);
+
+    const legR = new THREE.Mesh(legGeo, pantsMat);
+    legR.position.set(0.1, -0.15, 0.08);
+    legR.rotation.x = 0.15;
+    group.add(legR);
+
+    const shoeLeftGeo = new THREE.BoxGeometry(0.1, 0.08, 0.18);
+    const shoeL = new THREE.Mesh(shoeLeftGeo, shoeMat);
+    shoeL.position.set(-0.1, -0.42, 0.12);
+    group.add(shoeL);
+
+    const shoeR = new THREE.Mesh(shoeLeftGeo, shoeMat);
+    shoeR.position.set(0.1, -0.42, 0.12);
+    group.add(shoeR);
+  } else {
+    // Standing legs (Em pé, Acenar, Rindo, Modelo Noir)
+    const pelvisGeo = new THREE.CylinderGeometry(0.19, 0.17, 0.16, 16);
+    const pelvis = new THREE.Mesh(pelvisGeo, pantsMat);
+    pelvis.position.y = 0.22;
+    group.add(pelvis);
+
+    const legGeo = new THREE.CylinderGeometry(0.065, 0.055, 0.44, 12);
+    const leftLeg = new THREE.Mesh(legGeo, pantsMat);
+    leftLeg.position.set(-0.09, 0.0, 0);
+    group.add(leftLeg);
+
+    const rightLeg = new THREE.Mesh(legGeo, pantsMat);
+    rightLeg.position.set(0.09, 0.0, 0);
+    group.add(rightLeg);
+
+    const shoeLeftGeo = new THREE.BoxGeometry(0.1, 0.07, 0.18);
+    const shoeLeft = new THREE.Mesh(shoeLeftGeo, shoeMat);
+    shoeLeft.position.set(-0.09, -0.22, 0.03);
+    group.add(shoeLeft);
+
+    const shoeRight = new THREE.Mesh(shoeLeftGeo, shoeMat);
+    shoeRight.position.set(0.09, -0.22, 0.03);
+    group.add(shoeRight);
+  }
+
+  // Arms and Gestures
   const armLGeo = new THREE.CylinderGeometry(0.07, 0.06, 0.32, 10);
   const armL = new THREE.Mesh(armLGeo, clothMat);
-  armL.rotation.set(0.3, 0, 0.4);
-  armL.position.set(-0.28, 0.36, 0.1);
-  group.add(armL);
-
   const armRGeo = new THREE.CylinderGeometry(0.07, 0.06, 0.32, 10);
   const armR = new THREE.Mesh(armRGeo, clothMat);
-  armR.rotation.set(0.3, 0, -0.4);
-  armR.position.set(0.28, 0.36, 0.1);
+
+  if (isWaving) {
+    // Right arm raised waving cordial greeting
+    armR.rotation.set(-0.25, 0, -2.2);
+    armR.position.set(0.26, 0.58, 0.05);
+    armL.rotation.set(0.15, 0, 0.2);
+    armL.position.set(-0.26, 0.38, 0.05);
+  } else if (isLaughing) {
+    // Hands playfully resting forward with laughter
+    armL.rotation.set(0.5, 0, 0.35);
+    armR.rotation.set(0.5, 0, -0.35);
+    armL.position.set(-0.26, 0.36, 0.12);
+    armR.position.set(0.26, 0.36, 0.12);
+  } else if (isModel) {
+    // Chic runway posture
+    armL.rotation.set(-0.2, 0.2, 0.6);
+    armL.position.set(-0.26, 0.38, 0.05);
+    armR.rotation.set(0.1, 0, -0.2);
+    armR.position.set(0.26, 0.36, 0.05);
+    group.rotation.y = 0.2;
+  } else if (isSeated) {
+    armL.rotation.set(0.3, 0, 0.4);
+    armL.position.set(-0.28, 0.36, 0.1);
+    armR.rotation.set(0.3, 0, -0.4);
+    armR.position.set(0.28, 0.36, 0.1);
+  } else {
+    // Default standing relaxed
+    armL.rotation.set(0.15, 0, 0.15);
+    armL.position.set(-0.26, 0.38, 0.02);
+    armR.rotation.set(0.15, 0, -0.15);
+    armR.position.set(0.26, 0.38, 0.02);
+  }
+
+  group.add(armL);
   group.add(armR);
 
   return group;

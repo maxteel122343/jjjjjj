@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { CustomizationItem, ObjectAction, AccessoryTransform } from '../types';
+import { getGlbFile, getAllGlbIds } from '../lib/storageIndexedDB';
 
 interface AvatarPedestal3DProps {
   currentPose: string; // 'Em pé' | 'Sentar' | 'Deitar' | 'Rindo' | 'Acenar' | 'Modelo Noir'
@@ -24,6 +25,7 @@ interface AvatarPedestal3DProps {
   // Accessory positioning & Gizmo
   selectedItemToInspect?: CustomizationItem | null;
   selectedAccessoryId?: string | null;
+  selectedAccessoryItem?: CustomizationItem | null;
   onSelectAccessory?: (id: string | null) => void;
   onUpdateAccessoryTransform?: (
     itemId: string,
@@ -32,6 +34,97 @@ interface AvatarPedestal3DProps {
   gizmoMode?: 'mover' | 'rodar' | 'escalar';
   activeAction?: ObjectAction | null;
   isPositionLocked?: boolean;
+}
+
+async function loadGlbWithIndexedDBFallback(
+  url: string | undefined,
+  itemId: string | undefined,
+  originalItemId: string | undefined,
+  onSuccess: (gltf: any) => void,
+  onError: () => void
+) {
+  const loader = new GLTFLoader();
+
+  const tryLoad = (modelUrl: string): Promise<boolean> => {
+    return new Promise((resolve) => {
+      loader.load(
+        modelUrl,
+        (gltf) => {
+          onSuccess(gltf);
+          resolve(true);
+        },
+        undefined,
+        () => resolve(false)
+      );
+    });
+  };
+
+  // 1. Try provided URL if it's available
+  if (url) {
+    const ok = await tryLoad(url);
+    if (ok) return;
+  }
+
+  // 2. Try IndexedDB by direct itemId
+  if (itemId) {
+    try {
+      const blob = await getGlbFile(itemId);
+      if (blob) {
+        const freshUrl = URL.createObjectURL(blob);
+        const ok = await tryLoad(freshUrl);
+        if (ok) return;
+      }
+    } catch (e) {}
+  }
+
+  // 3. Try IndexedDB by originalItemId
+  if (originalItemId) {
+    try {
+      const blob = await getGlbFile(originalItemId);
+      if (blob) {
+        const freshUrl = URL.createObjectURL(blob);
+        const ok = await tryLoad(freshUrl);
+        if (ok) return;
+      }
+    } catch (e) {}
+  }
+
+  // 4. Try extracting key from pub- prefixes (e.g. acc-pub-item-123-172000 or pub-172000)
+  if (itemId && itemId.includes('-pub-')) {
+    try {
+      const parts = itemId.split('-pub-');
+      if (parts[1]) {
+        const candidateId = parts[1].replace(/-\d+$/, '');
+        const blob = await getGlbFile(candidateId);
+        if (blob) {
+          const freshUrl = URL.createObjectURL(blob);
+          const ok = await tryLoad(freshUrl);
+          if (ok) return;
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 5. Try scanning all IndexedDB keys for matching substrings
+  try {
+    const allIds = await getAllGlbIds();
+    for (const key of allIds) {
+      if (
+        (itemId && (key.includes(itemId) || itemId.includes(key))) ||
+        (originalItemId && (key.includes(originalItemId) || originalItemId.includes(key)))
+      ) {
+        const blob = await getGlbFile(key);
+        if (blob) {
+          const freshUrl = URL.createObjectURL(blob);
+          const ok = await tryLoad(freshUrl);
+          if (ok) return;
+        }
+      }
+    }
+  } catch (e) {}
+
+  // 6. Fallback
+  onError();
 }
 
 export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
@@ -44,6 +137,7 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
   onRegisterSnapshotTaker,
   selectedItemToInspect = null,
   selectedAccessoryId = null,
+  selectedAccessoryItem = null,
   onSelectAccessory,
   onUpdateAccessoryTransform,
   gizmoMode = 'mover',
@@ -226,6 +320,9 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
 
     transformControls.addEventListener('dragging-changed', (event: any) => {
       isTransformDraggingRef.current = Boolean(event.value);
+      if (event.value) {
+        isDraggingRef.current = false;
+      }
     });
 
     transformControls.addEventListener('change', () => {
@@ -364,6 +461,9 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
     // Mouse Drag for Orbit Rotation
     const onMouseDown = (e: MouseEvent) => {
       if (isTransformDraggingRef.current) return;
+      if (transformControlsRef.current && transformControlsRef.current.axis !== null) {
+        return;
+      }
       isDraggingRef.current = true;
       prevMouseRef.current = { x: e.clientX, y: e.clientY };
     };
@@ -433,8 +533,48 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
     }
     accessoryGroupsRef.current.clear();
 
+    // Helper to synchronize Gizmo attachment
+    const syncGizmo = () => {
+      const tc = transformControlsRef.current;
+      if (!tc) return;
+
+      if (isPositionLocked) {
+        tc.detach();
+        if (tc.getHelper()) tc.getHelper().visible = false;
+        return;
+      }
+
+      if (selectedAccessoryId) {
+        const accGroup = accessoryGroupsRef.current.get(selectedAccessoryId);
+        if (accGroup) {
+          accGroup.updateMatrixWorld(true);
+          tc.attach(accGroup);
+          tc.enabled = true;
+          const mode = gizmoMode === 'rodar' ? 'rotate' : gizmoMode === 'escalar' ? 'scale' : 'translate';
+          tc.setMode(mode);
+          tc.size = 0.85;
+          if (tc.getHelper()) tc.getHelper().visible = true;
+          return;
+        }
+      } else if (selectedItemToInspect && isolatedGroupRef.current && isolatedGroupRef.current.children.length > 0) {
+        const target = isolatedGroupRef.current.children[0];
+        if (target) {
+          target.updateMatrixWorld(true);
+          tc.attach(target);
+          tc.enabled = true;
+          const mode = gizmoMode === 'rodar' ? 'rotate' : gizmoMode === 'escalar' ? 'scale' : 'translate';
+          tc.setMode(mode);
+          tc.size = 0.85;
+          if (tc.getHelper()) tc.getHelper().visible = true;
+          return;
+        }
+      }
+
+      tc.detach();
+      if (tc.getHelper()) tc.getHelper().visible = false;
+    };
+
     // CASE 1: ISOLATED ITEM INSPECTION
-    // "quando o usuario ta na loja vendo avatar ele clica no itens da loja o item mostrado no lugar do avatar se não for acessorio esse item"
     const isIsolatedItem =
       selectedItemToInspect &&
       !selectedItemToInspect.isAccessory &&
@@ -446,43 +586,40 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
       avatarGroup.visible = false;
       isolatedGroup.visible = true;
 
-      if (selectedItemToInspect.fileBlobUrl) {
-        const loader = new GLTFLoader();
-        loader.load(
-          selectedItemToInspect.fileBlobUrl,
-          (gltf) => {
-            const m = gltf.scene;
-            const box = new THREE.Box3().setFromObject(m);
-            const size = box.getSize(new THREE.Vector3());
-            const maxDim = Math.max(size.x, size.y, size.z, 0.1);
-            const s = 1.3 / maxDim;
-            m.scale.set(s, s, s);
+      loadGlbWithIndexedDBFallback(
+        selectedItemToInspect.fileBlobUrl,
+        selectedItemToInspect.id,
+        selectedItemToInspect.originalItemId,
+        (gltf) => {
+          const m = gltf.scene;
+          const box = new THREE.Box3().setFromObject(m);
+          const size = box.getSize(new THREE.Vector3());
+          const maxDim = Math.max(size.x, size.y, size.z, 0.1);
+          const s = 1.3 / maxDim;
+          m.scale.set(s, s, s);
 
-            const scaledBox = new THREE.Box3().setFromObject(m);
-            const center = scaledBox.getCenter(new THREE.Vector3());
-            m.position.x = -center.x;
-            m.position.z = -center.z;
-            m.position.y = 0.12 - scaledBox.min.y;
+          const scaledBox = new THREE.Box3().setFromObject(m);
+          const center = scaledBox.getCenter(new THREE.Vector3());
+          m.position.x = -center.x;
+          m.position.z = -center.z;
+          m.position.y = 0.12 - scaledBox.min.y;
 
-            m.traverse((node) => {
-              if ((node as THREE.Mesh).isMesh) {
-                node.castShadow = true;
-                node.receiveShadow = true;
-                node.frustumCulled = false;
-              }
-            });
-            isolatedGroup.add(m);
-          },
-          undefined,
-          () => {
-            const fallbackMesh = createDecorativeObjectMesh(selectedItemToInspect.name);
-            isolatedGroup.add(fallbackMesh);
-          }
-        );
-      } else {
-        const proceduralMesh = createDecorativeObjectMesh(selectedItemToInspect.name);
-        isolatedGroup.add(proceduralMesh);
-      }
+          m.traverse((node: any) => {
+            if ((node as THREE.Mesh).isMesh) {
+              node.castShadow = true;
+              node.receiveShadow = true;
+              node.frustumCulled = false;
+            }
+          });
+          isolatedGroup.add(m);
+          syncGizmo();
+        },
+        () => {
+          const fallbackMesh = createDecorativeObjectMesh(selectedItemToInspect.name);
+          isolatedGroup.add(fallbackMesh);
+          syncGizmo();
+        }
+      );
       return;
     }
 
@@ -492,9 +629,16 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
 
     // Helper to attach accessories to avatar
     const attachAccessories = (root: THREE.Group) => {
-      const accessories = equippedItems.filter(
-        (i) => i.isAccessory || i.category === 'acessorios' || i.equipped
-      );
+      const accessoriesMap = new Map<string, CustomizationItem>();
+      equippedItems.forEach((i) => {
+        if (i.isAccessory || i.category === 'acessorios' || i.equipped || i.id === selectedAccessoryId) {
+          accessoriesMap.set(i.id, i);
+        }
+      });
+      if (selectedAccessoryItem) {
+        accessoriesMap.set(selectedAccessoryItem.id, selectedAccessoryItem);
+      }
+      const accessories = Array.from(accessoriesMap.values());
 
       accessories.forEach((acc) => {
         const accGroup = new THREE.Group();
@@ -513,55 +657,63 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
         accessoryGroupsRef.current.set(acc.id, accGroup);
         root.add(accGroup);
 
-        if (acc.fileBlobUrl) {
-          const loader = new GLTFLoader();
-          loader.load(
-            acc.fileBlobUrl,
-            (gltf) => {
-              const m = gltf.scene;
-              const box = new THREE.Box3().setFromObject(m);
-              const size = box.getSize(new THREE.Vector3());
-              const maxDim = Math.max(size.x, size.y, size.z, 0.05);
-              const s = 0.45 / maxDim;
-              m.scale.set(s, s, s);
+        // Immediate visual marker so gizmo and preview are active with zero delay
+        const tempPlaceholder = new THREE.Group();
+        tempPlaceholder.name = '__temp_placeholder__';
+        const ringGeo = new THREE.TorusGeometry(0.12, 0.02, 16, 32);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd700, wireframe: false });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.rotation.x = Math.PI / 2;
+        tempPlaceholder.add(ring);
+        accGroup.add(tempPlaceholder);
 
-              m.traverse((n) => {
-                if ((n as THREE.Mesh).isMesh) {
-                  n.castShadow = true;
-                  n.receiveShadow = true;
-                  n.frustumCulled = false;
-                }
-              });
-              accGroup.add(m);
-
-              // If this accessory is currently selected and not locked, attach Gizmo
-              if (selectedAccessoryId === acc.id && !isPositionLocked && transformControlsRef.current) {
-                transformControlsRef.current.attach(accGroup);
-              }
-            },
-            undefined,
-            () => {
-              const proceduralAcc = createProceduralAccessory(acc);
-              accGroup.add(proceduralAcc);
-              if (selectedAccessoryId === acc.id && !isPositionLocked && transformControlsRef.current) {
-                transformControlsRef.current.attach(accGroup);
-              }
-            }
-          );
-        } else {
-          const proceduralAcc = createProceduralAccessory(acc);
-          accGroup.add(proceduralAcc);
-          if (selectedAccessoryId === acc.id && !isPositionLocked && transformControlsRef.current) {
-            transformControlsRef.current.attach(accGroup);
-          }
+        // Instant gizmo attachment if this is the active accessory
+        if (acc.id === selectedAccessoryId) {
+          syncGizmo();
         }
+
+        loadGlbWithIndexedDBFallback(
+          acc.fileBlobUrl,
+          acc.id,
+          acc.originalItemId,
+          (gltf) => {
+            const temp = accGroup.getObjectByName('__temp_placeholder__');
+            if (temp) accGroup.remove(temp);
+
+            const m = gltf.scene;
+            const box = new THREE.Box3().setFromObject(m);
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z, 0.05);
+            const s = 0.45 / maxDim;
+            m.scale.set(s, s, s);
+
+            m.traverse((n: any) => {
+              if ((n as THREE.Mesh).isMesh) {
+                n.castShadow = true;
+                n.receiveShadow = true;
+                n.frustumCulled = false;
+              }
+            });
+            accGroup.add(m);
+            syncGizmo();
+          },
+          () => {
+            const temp = accGroup.getObjectByName('__temp_placeholder__');
+            if (temp) accGroup.remove(temp);
+
+            const proceduralAcc = createProceduralAccessory(acc);
+            accGroup.add(proceduralAcc);
+            syncGizmo();
+          }
+        );
       });
     };
 
     if (avatarModelUrl) {
-      const loader = new GLTFLoader();
-      loader.load(
+      loadGlbWithIndexedDBFallback(
         avatarModelUrl,
+        undefined,
+        undefined,
         (gltf) => {
           const customModel = gltf.scene;
           const box = new THREE.Box3().setFromObject(customModel);
@@ -576,7 +728,26 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
           customModel.position.z = -center.z;
           customModel.position.y = 0.12 - scaledBox.min.y;
 
-          customModel.traverse((node) => {
+          // Apply posture adjustments according to currentPose
+          const poseLower = (currentPose || '').toLowerCase();
+          if (poseLower.includes('sentar')) {
+            customModel.position.y -= 0.38;
+          } else if (poseLower.includes('deitar') || poseLower.includes('reclinad')) {
+            customModel.rotation.x = -Math.PI / 4.2;
+            customModel.position.y -= 0.25;
+            customModel.position.z -= 0.2;
+          } else if (poseLower.includes('acenar')) {
+            customModel.rotation.z = -0.06;
+            customModel.rotation.y = 0.12;
+          } else if (poseLower.includes('rindo')) {
+            customModel.rotation.x = 0.1;
+            customModel.rotation.z = -0.03;
+          } else if (poseLower.includes('modelo') || poseLower.includes('noir')) {
+            customModel.rotation.y = 0.25;
+            customModel.rotation.z = 0.04;
+          }
+
+          customModel.traverse((node: any) => {
             if ((node as THREE.Mesh).isMesh) {
               node.castShadow = true;
               node.receiveShadow = true;
@@ -587,7 +758,6 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
           avatarGroup.add(customModel);
           attachAccessories(avatarGroup);
         },
-        undefined,
         () => {
           console.warn('Could not load custom avatar GLB model, falling back to base model');
           const baseModel = buildBaseProceduralAvatar(currentPose, equippedItems);
@@ -609,8 +779,55 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
     avatarName,
     selectedItemToInspect,
     selectedAccessoryId,
+    selectedAccessoryItem,
     isPositionLocked,
+    gizmoMode,
   ]);
+
+  // Synchronize TransformControls attachment whenever selection or gizmo mode changes
+  useEffect(() => {
+    const tc = transformControlsRef.current;
+    if (!tc) return;
+
+    if (isPositionLocked) {
+      tc.detach();
+      if (tc.getHelper()) tc.getHelper().visible = false;
+      return;
+    }
+
+    if (selectedAccessoryId) {
+      const accGroup = accessoryGroupsRef.current.get(selectedAccessoryId);
+      if (accGroup) {
+        accGroup.updateMatrixWorld(true);
+        if (tc.object !== accGroup) {
+          tc.attach(accGroup);
+        }
+        tc.enabled = true;
+        const mode = gizmoMode === 'rodar' ? 'rotate' : gizmoMode === 'escalar' ? 'scale' : 'translate';
+        tc.setMode(mode);
+        tc.size = 0.95;
+        if (tc.getHelper()) tc.getHelper().visible = true;
+        return;
+      }
+    } else if (selectedItemToInspect && isolatedGroupRef.current && isolatedGroupRef.current.children.length > 0) {
+      const target = isolatedGroupRef.current.children[0];
+      if (target) {
+        target.updateMatrixWorld(true);
+        if (tc.object !== target) {
+          tc.attach(target);
+        }
+        tc.enabled = true;
+        const mode = gizmoMode === 'rodar' ? 'rotate' : gizmoMode === 'escalar' ? 'scale' : 'translate';
+        tc.setMode(mode);
+        tc.size = 0.95;
+        if (tc.getHelper()) tc.getHelper().visible = true;
+        return;
+      }
+    }
+
+    tc.detach();
+    if (tc.getHelper()) tc.getHelper().visible = false;
+  }, [selectedAccessoryId, selectedAccessoryItem, selectedItemToInspect, isPositionLocked, gizmoMode, equippedItems]);
 
   return (
     <div
@@ -821,11 +1038,12 @@ function buildBaseProceduralAvatar(
 ): THREE.Group {
   const modelRoot = new THREE.Group();
 
-  const isSeated = currentPose === 'Sentar';
-  const isReclined = currentPose === 'Deitar';
-  const isLaughing = currentPose === 'Rindo';
-  const isWaving = currentPose === 'Acenar';
-  const isModelPose = currentPose === 'Modelo Noir';
+  const poseLower = (currentPose || '').toLowerCase();
+  const isSeated = poseLower.includes('sentar');
+  const isReclined = poseLower.includes('deitar') || poseLower.includes('reclinad');
+  const isLaughing = poseLower.includes('rindo');
+  const isWaving = poseLower.includes('acenar');
+  const isModelPose = poseLower.includes('modelo') || poseLower.includes('noir');
 
   const skinMat = new THREE.MeshStandardMaterial({
     color: 0xf5cfb3,

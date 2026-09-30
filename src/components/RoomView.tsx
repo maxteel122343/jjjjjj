@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box, ChevronDown, LogOut, ArrowDown } from 'lucide-react';
+import { Box, ChevronDown, LogOut, ArrowDown, Sparkles, X, Plus, GripVertical, Check } from 'lucide-react';
 import {
   RoomData,
   AvatarPose,
@@ -13,6 +13,7 @@ import {
   AvatarPoseConfig,
   SpotVisualConfig,
   PlacedObject,
+  RoomAccessSlot,
 } from '../types';
 import { INITIAL_POSES, INITIAL_SPOTS, INITIAL_CHAT } from '../data/initialData';
 import { LoungeCanvas3D } from './LoungeCanvas3D';
@@ -20,15 +21,18 @@ import { GizmoWidget } from './GizmoWidget';
 import { PoseGrid } from './PoseGrid';
 import { GlassChat } from './GlassChat';
 import { SpeechBubbleOverlay } from './SpeechBubbleOverlay';
+import { RoomAccessBar } from './RoomAccessBar';
 
 interface RoomViewProps {
   room: RoomData;
   onExitToLobby: () => void;
-  equippedAccessories: string[];
+  equippedAccessories?: any[];
   activeUserAvatar?: StoreAvatar | null;
   user?: CreatorUser | null;
   poses?: AvatarPoseConfig[];
   storeAvatars?: StoreAvatar[];
+  roomAccessSlots?: RoomAccessSlot[];
+  onUpdateRoomAccessSlots?: (slots: RoomAccessSlot[]) => void;
   spotVisualConfig?: SpotVisualConfig;
   customAvatarObject?: PlacedObject | null;
 }
@@ -41,9 +45,22 @@ export const RoomView: React.FC<RoomViewProps> = ({
   user,
   poses: propPoses,
   storeAvatars = [],
+  roomAccessSlots: propRoomAccessSlots,
+  onUpdateRoomAccessSlots,
   spotVisualConfig,
   customAvatarObject,
-}) => {
+}: RoomViewProps) => {
+  // Live Avatar state (can switch dynamically inside room via Room Access Bar!)
+  const [liveAvatar, setLiveAvatar] = useState<StoreAvatar | null>(() => {
+    return activeUserAvatar || storeAvatars[0] || null;
+  });
+
+  useEffect(() => {
+    if (activeUserAvatar) {
+      setLiveAvatar(activeUserAvatar);
+    }
+  }, [activeUserAvatar]);
+
   // Gizmo & Transform State (Mover -> Escala -> Rotação)
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>('mover');
   const [transform, setTransform] = useState<AvatarTransform>({
@@ -75,11 +92,101 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
   const ownedAvatarIds = React.useMemo(() => {
     return storeAvatars
-      .filter((a) => a.owned || a.applied || a.id === activeUserAvatar?.id)
+      .filter((a) => a.owned || a.applied || a.id === liveAvatar?.id)
       .map((a) => a.id);
-  }, [storeAvatars, activeUserAvatar]);
+  }, [storeAvatars, liveAvatar]);
 
   const [selectedPose, setSelectedPose] = useState<AvatarPose>(() => poses[1] || poses[0] || INITIAL_POSES[0]);
+
+  // Room Access Slots state
+  const [roomAccessSlots, setRoomAccessSlots] = useState<RoomAccessSlot[]>(() => {
+    if (propRoomAccessSlots && propRoomAccessSlots.length > 0) return propRoomAccessSlots;
+    const saved = localStorage.getItem('3d_social_room_access_inventory');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    // Default seed
+    const initial: RoomAccessSlot[] = [];
+    const firstAvatar = liveAvatar || storeAvatars[0];
+    if (firstAvatar) {
+      initial.push({
+        id: `access-av-${firstAvatar.id}-init`,
+        slotIndex: 0,
+        type: 'avatar',
+        itemId: firstAvatar.id,
+        name: firstAvatar.name,
+        thumbnailUrl: firstAvatar.thumb || '',
+        badge: 'AVATAR',
+        avatarData: firstAvatar,
+      });
+    }
+    const samplePoses = poses.slice(0, 3);
+    samplePoses.forEach((p, idx) => {
+      initial.push({
+        id: `access-pose-${p.id}-init`,
+        slotIndex: idx + 1,
+        type: 'pose',
+        itemId: p.id,
+        name: p.name,
+        thumbnailUrl: p.thumbnailUrl || '',
+        badge: 'POSE',
+      });
+    });
+    return initial;
+  });
+
+  const handleUpdateRoomAccessSlots = (newSlots: RoomAccessSlot[]) => {
+    setRoomAccessSlots(newSlots);
+    localStorage.setItem('3d_social_room_access_inventory', JSON.stringify(newSlots));
+    if (onUpdateRoomAccessSlots) {
+      onUpdateRoomAccessSlots(newSlots);
+    }
+  };
+
+  // Manage drawer state inside room
+  const [isManageDrawerOpen, setIsManageDrawerOpen] = useState(false);
+  const [drawerTab, setDrawerTab] = useState<'avatars' | 'poses'>('avatars');
+  const [hudToast, setHudToast] = useState<string | null>(null);
+
+  const showHudToast = (msg: string) => {
+    setHudToast(msg);
+    setTimeout(() => setHudToast(null), 3500);
+  };
+
+  // Triggering a room access slot
+  const handleTriggerAccessSlot = (slot: RoomAccessSlot) => {
+    if (slot.type === 'avatar') {
+      const targetAvatar = storeAvatars.find((a) => a.id === slot.itemId) || slot.avatarData;
+      if (targetAvatar) {
+        setLiveAvatar(targetAvatar);
+        showHudToast(`👤 Avatar alterado para "${targetAvatar.name}"!`);
+      }
+    } else {
+      const targetPose = poses.find((p) => p.id === slot.itemId);
+      if (targetPose) {
+        setSelectedPose(targetPose);
+        showHudToast(`💃 Pose alterada para "${targetPose.name}"!`);
+      }
+    }
+  };
+
+  // Keyboard shortcut listener for slots 1-8
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+      const keyNum = parseInt(e.key, 10);
+      if (!isNaN(keyNum) && keyNum >= 1 && keyNum <= 8) {
+        const slot = roomAccessSlots.find((s) => s.slotIndex === keyNum - 1);
+        if (slot) {
+          handleTriggerAccessSlot(slot);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [roomAccessSlots, storeAvatars, poses]);
 
   // Spots State (puff ouro spots)
   const [spots] = useState<Spot[]>(() => {
@@ -190,7 +297,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
           onUpdateAvatarHeadScreenPos={setScreenHeadPositions}
           editorRoom={room.editorRoom}
           showSpotArrows={showSpotArrows}
-          activeUserAvatar={activeUserAvatar}
+          activeUserAvatar={liveAvatar}
           customAvatarObject={effectiveCustomAvatarObject}
           gizmoMode={gizmoMode}
           onChangeTransform={setTransform}
@@ -204,9 +311,17 @@ export const RoomView: React.FC<RoomViewProps> = ({
         screenPositions={screenHeadPositions}
         spots={spots}
         currentSpotId={currentSpotId}
-        activeUserAvatar={activeUserAvatar}
+        activeUserAvatar={liveAvatar}
         user={user}
       />
+
+      {/* Instant HUD Toast Feedback */}
+      {hudToast && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-40 px-4 py-2 rounded-xl bg-[#121319]/95 border border-[#ffd700]/70 text-[#ffd700] text-xs font-bold shadow-2xl backdrop-blur-md animate-fade-in flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-[#ffd700]" />
+          <span>{hudToast}</span>
+        </div>
+      )}
 
       {/* TOP BAR matching Reference 1:
           Cube Icon | Lounge 3/8 | Orbit camera dropdown | Exit */}
@@ -347,7 +462,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
           poses={poses}
           selectedPoseId={selectedPose.id}
           onSelectPose={setSelectedPose}
-          activeUserAvatar={activeUserAvatar}
+          activeUserAvatar={liveAvatar}
           ownedAvatarIds={ownedAvatarIds}
         />
       </div>
@@ -361,6 +476,212 @@ export const RoomView: React.FC<RoomViewProps> = ({
           onSendMessage={handleSendMessage}
         />
       </div>
+
+      {/* BOTTOM CENTER: INVENTÁRIO DE ACESSO DAS ROOMS (HOTBAR SLOTS 1-8) */}
+      <RoomAccessBar
+        slots={roomAccessSlots}
+        onUpdateSlots={handleUpdateRoomAccessSlots}
+        onSlotClick={handleTriggerAccessSlot}
+        activeAvatarId={liveAvatar?.id}
+        activePoseId={selectedPose.id}
+        isInsideRoom={true}
+        onOpenManageDrawer={() => setIsManageDrawerOpen(true)}
+        onShowToast={showHudToast}
+      />
+
+      {/* DRAWER / MODAL: GERENCIAR SLOTS DE ACESSO DAS ROOMS */}
+      {isManageDrawerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/70 backdrop-blur-sm animate-fade-in select-none">
+          <div className="relative w-full max-w-md h-full bg-[#121319] border-l border-[#ffd700]/40 p-6 flex flex-col justify-between shadow-2xl text-zinc-100">
+            <div>
+              <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-[#ffd700]" />
+                  <h3 className="text-base font-serif font-bold text-white">
+                    Acesso Rápido das Rooms
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsManageDrawerOpen(false)}
+                  className="p-1 rounded-lg text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <p className="text-xs text-zinc-400 mt-2">
+                Arraste um Avatar ou Pose da sua coleção para os slots da barra de acesso abaixo (ou use as teclas de 1 a 8).
+              </p>
+
+              {/* Tabs: Avatares | Poses */}
+              <div className="flex items-center gap-2 mt-4 border-b border-white/10 pb-2">
+                <button
+                  type="button"
+                  onClick={() => setDrawerTab('avatars')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    drawerTab === 'avatars'
+                      ? 'bg-[#ffd700] text-black shadow-md'
+                      : 'bg-zinc-800 text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  Avatares ({storeAvatars.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDrawerTab('poses')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    drawerTab === 'poses'
+                      ? 'bg-[#ffd700] text-black shadow-md'
+                      : 'bg-zinc-800 text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  Poses ({poses.length})
+                </button>
+              </div>
+
+              {/* Items List */}
+              <div className="mt-4 space-y-2.5 max-h-[58vh] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-zinc-700">
+                {drawerTab === 'avatars' ? (
+                  storeAvatars.length === 0 ? (
+                    <div className="py-12 text-center text-zinc-500 text-xs">
+                      Nenhum avatar encontrado. Crie ou publique avatares no Modo Customização.
+                    </div>
+                  ) : (
+                    storeAvatars.map((av) => {
+                      const isEquippedInRoom = liveAvatar?.id === av.id;
+                      return (
+                        <div
+                          key={av.id}
+                          draggable={true}
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData(
+                              'application/json',
+                              JSON.stringify({ type: 'avatar', avatar: av })
+                            );
+                            e.dataTransfer.effectAllowed = 'copyMove';
+                          }}
+                          className="p-2.5 rounded-xl bg-[#171922] border border-white/10 flex items-center justify-between gap-3 group hover:border-[#ffd700]/50 transition-colors"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg overflow-hidden bg-black flex-shrink-0">
+                              <img
+                                src={av.thumb}
+                                alt={av.name}
+                                className="w-full h-full object-cover"
+                                referrerPolicy="no-referrer"
+                              />
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold text-zinc-200">{av.name}</p>
+                              <span className="text-[10px] font-mono text-cyan-400">AVATAR</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <div
+                              className="p-1.5 text-zinc-500 group-hover:text-[#ffd700] cursor-grab active:cursor-grabbing"
+                              title="Arraste para os slots de acesso"
+                            >
+                              <GripVertical className="w-4 h-4" />
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setLiveAvatar(av);
+                                showHudToast(`Avatar "${av.name}" equipado na sala!`);
+                              }}
+                              className={`px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer transition-all ${
+                                isEquippedInRoom
+                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                                  : 'bg-zinc-800 hover:bg-[#ffd700] hover:text-black text-zinc-200'
+                              }`}
+                            >
+                              {isEquippedInRoom ? '✓ Em Uso' : 'Equipar'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )
+                ) : (
+                  poses.map((pose) => {
+                    const isActivePose = selectedPose.id === pose.id;
+                    return (
+                      <div
+                        key={pose.id}
+                        draggable={true}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData(
+                            'application/json',
+                            JSON.stringify({ type: 'pose', pose })
+                          );
+                          e.dataTransfer.effectAllowed = 'copyMove';
+                        }}
+                        className="p-2.5 rounded-xl bg-[#171922] border border-white/10 flex items-center justify-between gap-3 group hover:border-[#ffd700]/50 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-lg overflow-hidden bg-black flex-shrink-0 flex items-center justify-center">
+                            {pose.thumbnailUrl ? (
+                              <img
+                                src={pose.thumbnailUrl}
+                                alt={pose.name}
+                                className="w-full h-full object-cover"
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <Sparkles className="w-5 h-5 text-[#ffd700]" />
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-zinc-200">{pose.name}</p>
+                            <span className="text-[10px] font-mono text-[#ffd700]">POSE</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <div
+                            className="p-1.5 text-zinc-500 group-hover:text-[#ffd700] cursor-grab active:cursor-grabbing"
+                            title="Arraste para os slots de acesso"
+                          >
+                            <GripVertical className="w-4 h-4" />
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedPose(pose);
+                              showHudToast(`Pose "${pose.name}" ativada!`);
+                            }}
+                            className={`px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer transition-all ${
+                              isActivePose
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                                : 'bg-zinc-800 hover:bg-[#ffd700] hover:text-black text-zinc-200'
+                            }`}
+                          >
+                            {isActivePose ? '✓ Ativa' : 'Aplicar'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setIsManageDrawerOpen(false)}
+                className="w-full py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-white transition-colors cursor-pointer"
+              >
+                Concluir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

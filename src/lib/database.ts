@@ -147,6 +147,8 @@ export async function persistStoreItem(
         accessoryTransform: payload.accessoryTransform,
         actions: payload.actions || [],
         originalItemId: payload.originalItemId,
+        associatedAvatarIds: payload.associatedAvatarIds || [],
+        associatedAvatarNames: payload.metadata?.associatedAvatarNames || [],
       },
       is_active: true,
     };
@@ -312,6 +314,7 @@ export async function fetchPublicStoreItems(): Promise<{
             applied: false,
             description: row.description,
             fileBlobUrl: row.asset_url,
+            originalItemId: row.metadata?.originalItemId || row.id,
           });
         } else if (row.object_type === 'pose') {
           poses.push({
@@ -324,8 +327,8 @@ export async function fetchPublicStoreItems(): Promise<{
             owned: true,
             author: row.metadata?.author || 'Criador',
             isPublishedByCreator: true,
-            associatedAvatarIds: row.metadata?.associatedAvatarIds,
-            associatedAvatarNames: row.metadata?.associatedAvatarNames,
+            associatedAvatarIds: row.metadata?.associatedAvatarIds || [],
+            associatedAvatarNames: row.metadata?.associatedAvatarNames || [],
             rarity: row.rarity || 'COMUM',
           });
         } else {
@@ -349,7 +352,7 @@ export async function fetchPublicStoreItems(): Promise<{
             accessoryTransform: row.metadata?.accessoryTransform,
             actions: row.metadata?.actions || [],
             activeActionId: row.metadata?.actions?.[0]?.id || null,
-            originalItemId: row.metadata?.originalItemId,
+            originalItemId: row.metadata?.originalItemId || row.id,
           });
         }
       }
@@ -359,6 +362,64 @@ export async function fetchPublicStoreItems(): Promise<{
     console.warn('Supabase fetchPublicStoreItems error:', err?.message);
   }
   return { items: [], avatars: [], poses: [] };
+}
+
+/**
+ * Record an item acquisition to the user's Supabase inventory table.
+ */
+export async function recordUserInventoryItem(
+  user: CreatorUser | null,
+  item: {
+    storeItemId?: string;
+    itemCode?: string;
+    itemName: string;
+    itemType: string;
+    thumbnailUrl?: string;
+  }
+): Promise<void> {
+  if (!user || user.isGuest || !user.id || !user.id.includes('-')) return;
+
+  try {
+    await supabase.from('user_inventory').upsert(
+      {
+        user_id: user.id,
+        store_item_id: item.storeItemId && item.storeItemId.includes('-') && item.storeItemId.length === 36 ? item.storeItemId : null,
+        item_code: item.itemCode || `#IT${Math.floor(100 + Math.random() * 900)}`,
+        item_name: item.itemName,
+        item_type: item.itemType,
+        thumbnail_url: item.thumbnailUrl,
+        is_equipped: false,
+        acquired_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id, store_item_id' }
+    );
+  } catch (err: any) {
+    console.warn('Supabase user_inventory upsert fallback:', err?.message);
+  }
+}
+
+/**
+ * Fetch all inventory items recorded for the user in Supabase.
+ */
+export async function fetchUserInventoryFromDatabase(
+  user: CreatorUser | null
+): Promise<any[]> {
+  if (!user || user.isGuest || !user.id || !user.id.includes('-')) return [];
+
+  try {
+    const { data, error } = await supabase
+      .from('user_inventory')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('acquired_at', { ascending: false });
+
+    if (!error && data) {
+      return data;
+    }
+  } catch (err: any) {
+    console.warn('Supabase fetchUserInventoryFromDatabase fallback:', err?.message);
+  }
+  return [];
 }
 
 /**

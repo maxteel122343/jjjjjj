@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Search,
   SlidersHorizontal,
@@ -27,6 +27,8 @@ import {
   Activity,
   CheckCircle2,
   Layers,
+  GripVertical,
+  Save,
 } from 'lucide-react';
 import {
   CustomizationItem,
@@ -38,9 +40,12 @@ import {
   AccessoryAttachmentPoint,
   AccessoryTransform,
   ObjectAction,
+  RoomAccessSlot,
 } from '../types';
 import { AvatarPedestal3D } from './AvatarPedestal3D';
+import { RoomAccessBar } from './RoomAccessBar';
 import { persistStoreItem, fetchPublicStoreItems } from '../lib/database';
+import { saveGlbFile, getGlbFile } from '../lib/storageIndexedDB';
 
 interface UserCustomizationViewProps {
   onBackToLobby: () => void;
@@ -51,6 +56,8 @@ interface UserCustomizationViewProps {
   customizationItems: CustomizationItem[];
   storeAvatars: StoreAvatar[];
   poses: AvatarPoseConfig[];
+  roomAccessSlots?: RoomAccessSlot[];
+  onUpdateRoomAccessSlots?: (slots: RoomAccessSlot[]) => void;
   onToggleEquipItem: (itemId: string) => void;
   onRemoveItemFromInventory: (itemId: string) => void;
   onApplyPose: (poseId: string) => void;
@@ -81,6 +88,8 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   customizationItems,
   storeAvatars,
   poses,
+  roomAccessSlots: propRoomAccessSlots,
+  onUpdateRoomAccessSlots,
   onToggleEquipItem,
   onRemoveItemFromInventory,
   onApplyPose,
@@ -115,10 +124,170 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
     setTimeout(() => setToastMsg(null), 3500);
   };
 
+  // Drag over pose target state
+  const [dragOverPoseId, setDragOverPoseId] = useState<string | null>(null);
+
+  // Room Access Inventory (hotbar) state
+  const [roomAccessSlots, setRoomAccessSlots] = useState<RoomAccessSlot[]>(() => {
+    if (propRoomAccessSlots && propRoomAccessSlots.length > 0) return propRoomAccessSlots;
+    const saved = localStorage.getItem('3d_social_room_access_inventory');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    // Seed default access slots from available avatars and poses
+    const initial: RoomAccessSlot[] = [];
+    const firstAvatar = storeAvatars[0];
+    if (firstAvatar) {
+      initial.push({
+        id: `access-av-${firstAvatar.id}-init`,
+        slotIndex: 0,
+        type: 'avatar',
+        itemId: firstAvatar.id,
+        name: firstAvatar.name,
+        thumbnailUrl: firstAvatar.thumb || '',
+        badge: 'AVATAR',
+        avatarData: firstAvatar,
+      });
+    }
+    const samplePoses = poses.slice(0, 3);
+    samplePoses.forEach((p, idx) => {
+      initial.push({
+        id: `access-pose-${p.id}-init`,
+        slotIndex: idx + 1,
+        type: 'pose',
+        itemId: p.id,
+        name: p.name,
+        thumbnailUrl: p.thumbnailUrl || '',
+        badge: 'POSE',
+        poseData: p,
+      });
+    });
+    return initial;
+  });
+
+  const handleUpdateRoomAccessSlots = (newSlots: RoomAccessSlot[]) => {
+    setRoomAccessSlots(newSlots);
+    localStorage.setItem('3d_social_room_access_inventory', JSON.stringify(newSlots));
+    if (onUpdateRoomAccessSlots) {
+      onUpdateRoomAccessSlots(newSlots);
+    }
+  };
+
+  const handleAddAvatarToRoomAccess = (av: StoreAvatar) => {
+    const usedIndices = new Set(roomAccessSlots.map((s) => s.slotIndex));
+    let targetIndex = -1;
+    for (let i = 0; i < 8; i++) {
+      if (!usedIndices.has(i)) {
+        targetIndex = i;
+        break;
+      }
+    }
+    if (targetIndex === -1) targetIndex = 0;
+
+    const newSlot: RoomAccessSlot = {
+      id: `access-av-${av.id}-${Date.now()}`,
+      slotIndex: targetIndex,
+      type: 'avatar',
+      itemId: av.id,
+      name: av.name,
+      thumbnailUrl: av.thumb || '',
+      badge: 'AVATAR',
+      avatarData: av,
+    };
+    const updated = [...roomAccessSlots.filter((s) => s.slotIndex !== targetIndex), newSlot];
+    handleUpdateRoomAccessSlots(updated);
+    showToast(`✨ Avatar "${av.name}" adicionado ao Slot ${targetIndex + 1} de Acesso das Rooms!`);
+  };
+
+  const handleAddPoseToRoomAccess = (pose: AvatarPoseConfig) => {
+    const usedIndices = new Set(roomAccessSlots.map((s) => s.slotIndex));
+    let targetIndex = -1;
+    for (let i = 0; i < 8; i++) {
+      if (!usedIndices.has(i)) {
+        targetIndex = i;
+        break;
+      }
+    }
+    if (targetIndex === -1) targetIndex = 1;
+
+    const newSlot: RoomAccessSlot = {
+      id: `access-pose-${pose.id}-${Date.now()}`,
+      slotIndex: targetIndex,
+      type: 'pose',
+      itemId: pose.id,
+      name: pose.name,
+      thumbnailUrl: pose.thumbnailUrl || '',
+      badge: 'POSE',
+      poseData: pose,
+    };
+    const updated = [...roomAccessSlots.filter((s) => s.slotIndex !== targetIndex), newSlot];
+    handleUpdateRoomAccessSlots(updated);
+    showToast(`✨ Pose "${pose.name}" adicionada ao Slot ${targetIndex + 1} de Acesso das Rooms!`);
+  };
+
+  const handleLinkAvatarToPoseAndRoomAccess = (av: StoreAvatar, pose: AvatarPoseConfig) => {
+    const usedIndices = new Set(roomAccessSlots.map((s) => s.slotIndex));
+    const findSlot = () => {
+      for (let i = 0; i < 8; i++) {
+        if (!usedIndices.has(i)) {
+          usedIndices.add(i);
+          return i;
+        }
+      }
+      return 0;
+    };
+
+    const avSlotIdx = findSlot();
+    const poseSlotIdx = findSlot();
+
+    const avSlot: RoomAccessSlot = {
+      id: `access-av-${av.id}-${Date.now()}`,
+      slotIndex: avSlotIdx,
+      type: 'avatar',
+      itemId: av.id,
+      name: av.name,
+      thumbnailUrl: av.thumb || '',
+      badge: 'AVATAR',
+      avatarData: av,
+    };
+
+    const poseSlot: RoomAccessSlot = {
+      id: `access-pose-${pose.id}-${Date.now()}`,
+      slotIndex: poseSlotIdx,
+      type: 'pose',
+      itemId: pose.id,
+      name: pose.name,
+      thumbnailUrl: pose.thumbnailUrl || '',
+      badge: 'POSE',
+      poseData: pose,
+    };
+
+    const filtered = roomAccessSlots.filter(
+      (s) => s.slotIndex !== avSlotIdx && s.slotIndex !== poseSlotIdx
+    );
+    const updated = [...filtered, avSlot, poseSlot];
+    handleUpdateRoomAccessSlots(updated);
+
+    if (onSelectActiveAvatar) onSelectActiveAvatar(av.id);
+    onApplyPose(pose.id);
+
+    showToast(
+      `✨ Avatar "${av.name}" e Pose "${pose.name}" vinculados e adicionados aos slots de Acesso das Rooms!`
+    );
+  };
+
   // Selected avatar & pose
   const [selectedAvatarId, setSelectedAvatarId] = useState<string>(
     storeAvatars.find((a) => a.applied)?.id || storeAvatars[0]?.id || 'av-1'
   );
+
+  const ownedAvatarIds = useMemo(() => {
+    return storeAvatars
+      .filter((a) => a.owned || a.applied || a.id === selectedAvatarId)
+      .map((a) => a.id);
+  }, [storeAvatars, selectedAvatarId]);
 
   const activePose = poses.find((p) => p.applied)?.name || 'Em pé';
 
@@ -147,6 +316,9 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   // Loja state
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [selectedLojaCategory, setSelectedLojaCategory] = useState<
+    'todos' | 'acessorios' | 'avatar' | 'poses' | 'itens'
+  >('todos');
 
   // Modal de publicação
   const [showPublishModal, setShowPublishModal] = useState(false);
@@ -168,6 +340,13 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
     useState<AccessoryAttachmentPoint>('companion_float');
   const [publishActions, setPublishActions] = useState<ObjectAction[]>([]);
 
+  // 3D Model source selection for publish persistence
+  const [publishModelSourceType, setPublishModelSourceType] = useState<
+    'active' | 'inventory' | 'upload'
+  >('active');
+  const [publishSelectedInventoryId, setPublishSelectedInventoryId] = useState<string>('');
+  const [publishUploadedFile, setPublishUploadedFile] = useState<File | null>(null);
+
   // Fetch from Supabase on mount to guarantee persistence across browser tabs and accounts!
   useEffect(() => {
     let isMounted = true;
@@ -184,47 +363,124 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
     };
   }, []);
 
+  // Helper to check if an item is a real published item (filters out fake mock clothing)
+  const isRealPublishedItem = (item: CustomizationItem) => {
+    if (!item) return false;
+    if (item.id.startsWith('hat-') || item.id.startsWith('coat-') || item.id.startsWith('shoe-')) {
+      return false; // Fake mock items
+    }
+    return Boolean(
+      item.isPublishedByCreator ||
+      item.isUserPublished ||
+      item.fileBlobUrl ||
+      item.originalItemId
+    );
+  };
+
+  // Helper to check if an avatar is a real published avatar (filters out fake stock photo avatars)
+  const isRealPublishedAvatar = (av: StoreAvatar) => {
+    if (!av) return false;
+    if (av.id.startsWith('av-') && !av.fileBlobUrl && !av.isUserPublished) {
+      return false; // Fake mock stock photo avatars
+    }
+    return true;
+  };
+
   // Filter items in Inventário
   const filteredInventoryItems = customizationItems.filter((item) => {
     if (!item.owned) return false;
+    if (!isRealPublishedItem(item)) return false;
     const matchesSearch = (item.name || '').toLowerCase().includes(searchQueryInventory.toLowerCase());
     if (!matchesSearch) return false;
 
     if (selectedCategory === 'todos') return true;
     if (selectedCategory === 'acessorios') return item.isAccessory || item.category === 'acessorios';
-    return item.category === selectedCategory;
+    return (item.category as string) === (selectedCategory as string);
   });
 
   const filteredUserInventory = userInventory.filter((item) => {
-    const matchesSearch = (item.name || '').toLowerCase().includes(searchQueryInventory.toLowerCase());
+    const matchesSearch = (item.displayName || item.name || '').toLowerCase().includes(searchQueryInventory.toLowerCase());
     if (!matchesSearch) return false;
 
     if (selectedCategory === 'todos') return true;
-    if (selectedCategory === 'salas') return item.type === 'sala' || item.type === 'cenario';
-    if (selectedCategory === 'mobilia') return item.type === 'movel';
-    if (selectedCategory === 'itens') return item.type === 'objeto';
-    if (selectedCategory === 'poses') return item.type === 'pose';
-    if (selectedCategory === 'avatar') return item.type === 'avatar';
+    const typeLower = (item.type || '').toLowerCase();
+    if (selectedCategory === 'salas') return typeLower === 'sala' || typeLower === 'cenario';
+    if (selectedCategory === 'mobilia') return typeLower === 'movel' || typeLower === 'item';
+    if (selectedCategory === 'itens') return typeLower === 'objeto' || typeLower === 'item';
+    if (selectedCategory === 'poses') return typeLower === 'pose';
+    if (selectedCategory === 'avatar') return typeLower === 'avatar';
     return false;
   });
 
-  // Filter avatars in Loja
+  // Filter avatars in Loja: ONLY real published avatars
   const filteredStoreAvatars = storeAvatars.filter((av) => {
+    if (!isRealPublishedAvatar(av)) return false;
+    if (
+      selectedLojaCategory === 'acessorios' ||
+      selectedLojaCategory === 'poses' ||
+      selectedLojaCategory === 'itens'
+    ) {
+      return false;
+    }
     const matchesSearch = (av.name || '').toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesTag = !selectedTag || av.tags.includes(selectedTag);
+    const matchesTag = !selectedTag || (av.tags && av.tags.includes(selectedTag));
     return matchesSearch && matchesTag;
   });
 
-  // Filter items in Loja (Store Items & Community Published)
+  // Filter items in Loja (Store Items & Community Published): ONLY real published items
   const publishedCommunityItems = customizationItems.filter((i) => {
+    if (!isRealPublishedItem(i)) return false;
     const isAccessory = i.isAccessory || i.category === 'acessorios';
-    if (selectedTag === '#acessorios') return isAccessory;
+    if (selectedLojaCategory === 'avatar' || selectedLojaCategory === 'poses') return false;
+    if (selectedLojaCategory === 'acessorios' && !isAccessory) return false;
+    if (selectedLojaCategory === 'itens' && isAccessory) return false;
+    if (selectedTag === '#acessorios' && !isAccessory) return false;
     const matchesSearch = (i.name || '').toLowerCase().includes(searchQuery.toLowerCase());
     return matchesSearch;
   });
 
-  // Selected active accessory object if any
-  const activeSelectedAccessory = customizationItems.find((i) => i.id === selectedAccessoryId);
+  // Filter poses in Loja
+  const storePoses = poses.filter((p) => {
+    if (
+      selectedLojaCategory === 'avatar' ||
+      selectedLojaCategory === 'acessorios' ||
+      selectedLojaCategory === 'itens'
+    ) {
+      return false;
+    }
+    if (selectedTag === '#acessorios') return false;
+    const matchesSearch = (p.name || '').toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesSearch;
+  });
+
+  // Selected active accessory object if any (checked across customizationItems, published items, and inventory)
+  const activeSelectedAccessory = useMemo(() => {
+    if (!selectedAccessoryId) return null;
+    const directMatch =
+      customizationItems.find((i) => i.id === selectedAccessoryId) ||
+      publishedCommunityItems.find((i) => i.id === selectedAccessoryId) ||
+      (selectedItemToInspect?.id === selectedAccessoryId ? selectedItemToInspect : null);
+    if (directMatch) return directMatch;
+
+    const invMatch = userInventory.find((i) => i.id === selectedAccessoryId);
+    if (invMatch) {
+      return {
+        id: invMatch.id,
+        code: `#AC${Math.floor(100 + Math.random() * 900)}`,
+        name: invMatch.displayName,
+        category: 'acessorios' as const,
+        thumb: invMatch.thumbUrl,
+        fileBlobUrl: invMatch.fileBlobUrl,
+        isAccessory: true,
+        owned: true,
+        equipped: true,
+        price: 0,
+        rarity: 'COMUM' as const,
+        author: user?.displayName || 'Luzenne',
+      };
+    }
+    return null;
+  }, [selectedAccessoryId, customizationItems, publishedCommunityItems, selectedItemToInspect, userInventory, user]);
 
   // Active actions available for currently inspected item or accessory
   const activeItemActions: ObjectAction[] =
@@ -240,9 +496,14 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
       setSelectedItemToInspect(null);
       setSelectedAccessoryId(item.id);
       setIsPositionLocked(Boolean(item.isLockedPosition));
-      if (!item.equipped) {
+
+      // Guarantee item is registered in customizationItems and equipped
+      if (!customizationItems.some((i) => i.id === item.id)) {
+        onPublishCustomItem?.({ ...item, equipped: true, isAccessory: true, owned: true });
+      } else if (!item.equipped) {
         onToggleEquipItem(item.id);
       }
+
       if (item.actions && item.actions.length > 0) {
         setActiveAction(item.actions[0]);
       } else {
@@ -289,6 +550,40 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
         ? 'Posição do acessório travada no avatar! 🔒'
         : 'Gizmo de ajuste liberado para mover! 🔓'
     );
+  };
+
+  const handleSaveToPrincipalAvatar = () => {
+    if (!selectedAccessoryId) return;
+    const acc = customizationItems.find((i) => i.id === selectedAccessoryId);
+    if (!acc) return;
+
+    // 1. Lock position
+    setIsPositionLocked(true);
+
+    // 2. Persist transform to active customization item
+    if (acc.accessoryTransform && onUpdateCustomizationItemTransform) {
+      onUpdateCustomizationItemTransform(acc.id, acc.accessoryTransform);
+    }
+
+    // 3. Persist to creator user inventory
+    if (onSaveToInventory) {
+      onSaveToInventory({
+        ...acc,
+        isAccessory: true,
+        equipped: true,
+      });
+    }
+
+    // 4. Mark as owned and equipped if not owned yet
+    if (!acc.owned && onAcquireCustomItem) {
+      onAcquireCustomItem({
+        ...acc,
+        owned: true,
+        equipped: true,
+      });
+    }
+
+    showToast(`✨ Definição salva no seu Avatar Principal! Acessório "${acc.name}" agora permanece fixado nesta posição.`);
   };
 
   // Cart operations
@@ -427,9 +722,61 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
       return;
     }
 
+    // Determine 3D model source blob & original id for complete persistence
+    let sourceBlobUrl = '';
+    let sourceOriginalId: string | undefined = undefined;
+    let fileBlobToStore: Blob | null = null;
+
+    if (publishModelSourceType === 'upload' && publishUploadedFile) {
+      fileBlobToStore = publishUploadedFile;
+      sourceBlobUrl = URL.createObjectURL(publishUploadedFile);
+    } else if (publishModelSourceType === 'inventory' && publishSelectedInventoryId) {
+      sourceOriginalId = publishSelectedInventoryId;
+      const invMatch = userInventory.find((i) => i.id === publishSelectedInventoryId);
+      if (invMatch?.fileBlobUrl) {
+        sourceBlobUrl = invMatch.fileBlobUrl;
+      }
+      const existingBlob = await getGlbFile(publishSelectedInventoryId);
+      if (existingBlob) {
+        fileBlobToStore = existingBlob;
+      } else if (sourceBlobUrl) {
+        try {
+          const res = await fetch(sourceBlobUrl);
+          fileBlobToStore = await res.blob();
+        } catch (e) {}
+      }
+    } else if (publishModelSourceType === 'active') {
+      const activeItem = activeSelectedAccessory || selectedItemToInspect;
+      if (activeItem) {
+        sourceOriginalId = activeItem.originalItemId || activeItem.id;
+        sourceBlobUrl = activeItem.fileBlobUrl || '';
+        const existingBlob =
+          (await getGlbFile(activeItem.id)) ||
+          (activeItem.originalItemId ? await getGlbFile(activeItem.originalItemId) : null);
+        if (existingBlob) {
+          fileBlobToStore = existingBlob;
+        } else if (sourceBlobUrl) {
+          try {
+            const res = await fetch(sourceBlobUrl);
+            fileBlobToStore = await res.blob();
+          } catch (e) {}
+        }
+      }
+    }
+
     const isAccessory = publishObjectType === 'acessorio';
+    const generatedItemId = isAccessory ? `acc-pub-${Date.now()}` : `pub-${Date.now()}`;
+
+    if (fileBlobToStore) {
+      await saveGlbFile(generatedItemId, fileBlobToStore);
+      if (sourceOriginalId) {
+        await saveGlbFile(sourceOriginalId, fileBlobToStore);
+      }
+      sourceBlobUrl = URL.createObjectURL(fileBlobToStore);
+    }
+
     const newItem: Partial<CustomizationItem> = {
-      id: `pub-${Date.now()}`,
+      id: generatedItemId,
       code: `#${isAccessory ? 'AC' : 'P'}${Math.floor(100 + Math.random() * 900)}`,
       name: newPublishName.trim(),
       category: isAccessory ? 'acessorios' : newPublishCategory,
@@ -440,6 +787,8 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
       rarity: publishMode === 'simples' ? 'COMUM' : publishRarity,
       isPublishedByCreator: true,
       author: user?.displayName || 'Luzenne',
+      fileBlobUrl: sourceBlobUrl || undefined,
+      originalItemId: sourceOriginalId,
       description:
         publishDescription.trim() ||
         `Item 3D criado por ${user?.displayName || 'Luzenne'}.`,
@@ -469,11 +818,14 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
 
     await persistStoreItem(
       {
+        id: newItem.id,
         name: newItem.name!,
         objectType: publishObjectType,
         price: finalPrice,
         hashtags: finalTags,
         thumbnailUrl: finalThumb,
+        fileBlobUrl: newItem.fileBlobUrl,
+        originalItemId: newItem.originalItemId,
         rarity: newItem.rarity,
         publishMode,
         description: newItem.description,
@@ -486,41 +838,63 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
     );
 
     onPublishCustomItem(newItem);
+    if (isAccessory && newItem.id) {
+      setSelectedAccessoryId(newItem.id);
+      setSelectedItemToInspect(null);
+      setIsPositionLocked(false);
+    }
     setShowPublishModal(false);
     setNewPublishName('');
+    setPublishUploadedFile(null);
+    setPublishSelectedInventoryId('');
     showToast(`"${newItem.name}" publicado com persistência na Loja!`);
   };
 
-  const equippedItems = React.useMemo(() => customizationItems.filter((i) => i.equipped), [customizationItems]);
+  const equippedItems = React.useMemo(() => {
+    const base = customizationItems.filter((i) => i.equipped);
+    if (activeSelectedAccessory && !base.some((i) => i.id === activeSelectedAccessory.id)) {
+      return [{ ...activeSelectedAccessory, equipped: true, isAccessory: true }, ...base];
+    }
+    return base;
+  }, [customizationItems, activeSelectedAccessory]);
 
   const currentStoreAvatar = storeAvatars.find((a) => a.id === selectedAvatarId);
   const currentCustomAvatar = customizationItems.find((i) => i.id === selectedAvatarId);
   
-  const currentAvatar = (selectedItemToInspect?.isAvatar || selectedItemToInspect?.category === 'avatares')
+  const currentAvatar: StoreAvatar = (selectedItemToInspect?.isAvatar || selectedItemToInspect?.category === 'avatares')
     ? {
         id: selectedItemToInspect.id,
         name: selectedItemToInspect.name,
         fileBlobUrl: selectedItemToInspect.fileBlobUrl,
         thumb: selectedItemToInspect.thumb,
-        price: selectedItemToInspect.price,
-        rarity: selectedItemToInspect.rarity,
+        price: selectedItemToInspect.price || 0,
+        rarity: (selectedItemToInspect.rarity || 'RARO') as 'COMUM' | 'RARO' | 'ÉLITE',
         tags: [],
         author: selectedItemToInspect.author,
         owned: selectedItemToInspect.owned,
-        applied: false
+        applied: false,
       }
     : currentStoreAvatar || (currentCustomAvatar ? {
-    id: currentCustomAvatar.id,
-    name: currentCustomAvatar.name,
-    fileBlobUrl: currentCustomAvatar.fileBlobUrl,
-    thumb: currentCustomAvatar.thumb,
-    price: currentCustomAvatar.price,
-    rarity: currentCustomAvatar.rarity,
-    tags: [],
-    author: currentCustomAvatar.author,
-    owned: currentCustomAvatar.owned,
-    applied: false
-  } : storeAvatars[0]);
+        id: currentCustomAvatar.id,
+        name: currentCustomAvatar.name,
+        fileBlobUrl: currentCustomAvatar.fileBlobUrl,
+        thumb: currentCustomAvatar.thumb,
+        price: currentCustomAvatar.price || 0,
+        rarity: (currentCustomAvatar.rarity || 'RARO') as 'COMUM' | 'RARO' | 'ÉLITE',
+        tags: [],
+        author: currentCustomAvatar.author,
+        owned: currentCustomAvatar.owned,
+        applied: false,
+      } : storeAvatars[0] || {
+        id: 'av-default',
+        name: 'Avatar Luzenne',
+        rarity: 'COMUM' as const,
+        price: 0,
+        thumb: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
+        tags: [],
+        owned: true,
+        applied: true,
+      });
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#0a0b0e] text-[#e8d5b5] font-sans flex flex-col select-none">
@@ -753,17 +1127,22 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                 {selectedCategory === 'avatar' && (
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     {storeAvatars
-                      .filter((av) => av.owned && (av.name || '').toLowerCase().includes(searchQueryInventory.toLowerCase()))
+                      .filter((av) => isRealPublishedAvatar(av) && av.owned && (av.name || '').toLowerCase().includes(searchQueryInventory.toLowerCase()))
                       .map((av) => {
                         const isSelectedForPreview = selectedAvatarId === av.id;
                         return (
                           <div
                             key={av.id}
+                            draggable={true}
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData('application/json', JSON.stringify({ type: 'avatar', avatar: av }));
+                              e.dataTransfer.effectAllowed = 'copyMove';
+                            }}
                             onClick={() => {
                               setSelectedAvatarId(av.id);
                               setSelectedItemToInspect(null);
                             }}
-                            className={`relative rounded-xl border p-2.5 flex flex-col justify-between transition-all cursor-pointer group ${
+                            className={`relative rounded-xl border p-2.5 flex flex-col justify-between transition-all cursor-pointer group select-none ${
                               av.applied
                                 ? 'bg-[#15171e] border-[#ffd700] ring-1 ring-[#ffd700]/70 shadow-[0_0_12px_rgba(255,215,0,0.2)]'
                                 : isSelectedForPreview
@@ -805,26 +1184,50 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                               {av.name}
                             </p>
 
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedAvatarId(av.id);
-                                if (onSelectActiveAvatar) {
-                                  onSelectActiveAvatar(av.id);
-                                } else {
-                                  onAcquireStoreAvatar(av.id);
-                                }
-                                showToast(`Avatar "${av.name}" selecionado!`);
-                              }}
-                              className={`w-full mt-2 py-1.5 rounded text-[11px] font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                                av.applied
-                                  ? 'bg-[#ffd700] text-black'
-                                  : 'bg-zinc-800 hover:bg-[#d4af37] hover:text-black text-zinc-200'
-                              }`}
+                            {/* Drag Indicator handle */}
+                            <div
+                              className="flex items-center justify-center gap-1 text-[9px] font-mono text-zinc-400 group-hover:text-[#ffd700] py-0.5 mt-1 cursor-grab active:cursor-grabbing border border-dashed border-white/10 group-hover:border-[#ffd700]/50 rounded bg-black/30"
+                              title="Arraste este Avatar para o Inventário de Acesso das Rooms ou para uma Pose!"
                             >
-                              {av.applied ? '✓ Avatar em Uso' : 'Usar para Jogar'}
-                            </button>
+                              <GripVertical className="w-2.5 h-2.5 text-[#ffd700]" />
+                              <span>Arraste p/ Rooms</span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-1.5 mt-2">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedAvatarId(av.id);
+                                  if (onSelectActiveAvatar) {
+                                    onSelectActiveAvatar(av.id);
+                                  } else {
+                                    onAcquireStoreAvatar(av.id);
+                                  }
+                                  showToast(`Avatar "${av.name}" selecionado!`);
+                                }}
+                                className={`py-1.5 rounded text-[10px] font-bold transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                                  av.applied
+                                    ? 'bg-[#ffd700] text-black'
+                                    : 'bg-zinc-800 hover:bg-[#d4af37] hover:text-black text-zinc-200'
+                                }`}
+                              >
+                                {av.applied ? '✓ Em Uso' : 'Usar'}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleAddAvatarToRoomAccess(av);
+                                }}
+                                className="py-1.5 rounded text-[10px] font-bold bg-[#ffd700]/15 hover:bg-[#ffd700] text-[#ffd700] hover:text-black border border-[#ffd700]/30 transition-all cursor-pointer flex items-center justify-center gap-1"
+                                title="Adicionar este avatar ao Inventário de Acesso das Rooms"
+                              >
+                                <Plus className="w-3 h-3" />
+                                <span>Rooms</span>
+                              </button>
+                            </div>
                           </div>
                         );
                       })}
@@ -922,7 +1325,110 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                   </div>
                 )}
 
-                {(selectedCategory === 'todos' || ['salas', 'mobilia', 'itens', 'poses', 'avatar'].includes(selectedCategory)) && filteredUserInventory.length > 0 && (
+                {/* Poses do Avatar no Inventário */}
+                {(selectedCategory === 'todos' || selectedCategory === 'poses') && poses.length > 0 && (
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/5">
+                      <span className="text-xs font-bold text-[#ffd700] uppercase tracking-wider flex items-center gap-1.5">
+                        <span>💃</span> Poses do Avatar
+                      </span>
+                      <span className="text-[10px] text-zinc-500 font-mono">
+                        {poses.length} poses
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {poses
+                        .filter((p) => (p.name || '').toLowerCase().includes(searchQueryInventory.toLowerCase()))
+                        .map((pose) => {
+                          const isRestricted = Boolean(pose.associatedAvatarIds && pose.associatedAvatarIds.length > 0);
+                          const isAvatarCompatible = !isRestricted || pose.associatedAvatarIds!.some((id) => ownedAvatarIds.includes(id) || selectedAvatarId === id);
+                          const isLocked = isRestricted && !isAvatarCompatible;
+
+                          return (
+                            <div
+                              key={`inv-pose-${pose.id}`}
+                              draggable={!isLocked}
+                              onDragStart={(e) => {
+                                e.dataTransfer.setData('application/json', JSON.stringify({ type: 'pose', pose }));
+                                e.dataTransfer.effectAllowed = 'copyMove';
+                              }}
+                              className={`relative rounded-xl border p-2.5 flex flex-col justify-between select-none transition-all group ${
+                                pose.applied
+                                  ? 'bg-[#15171e] border-[#ffd700] ring-1 ring-[#ffd700]/70'
+                                  : 'bg-[#121317] border-[#22242d] hover:border-zinc-700'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between text-[10px] mb-1">
+                                <span className="font-mono text-[#ffd700] text-[9px] font-bold">POSE</span>
+                                {pose.applied && (
+                                  <span className="text-[9px] font-bold text-[#ffd700] bg-[#ffd700]/20 px-1 rounded">ATIVA</span>
+                                )}
+                              </div>
+
+                              <div className="relative aspect-square w-full rounded-lg overflow-hidden bg-[#0d0e11] my-1 flex items-center justify-center">
+                                {pose.thumbnailUrl ? (
+                                  <img
+                                    src={pose.thumbnailUrl}
+                                    alt={pose.name}
+                                    className="w-full h-full object-cover filter contrast-110 group-hover:scale-105 transition-transform"
+                                    referrerPolicy="no-referrer"
+                                  />
+                                ) : (
+                                  <span className="text-2xl">💃</span>
+                                )}
+                              </div>
+
+                              <p className="text-[11px] font-semibold text-zinc-200 truncate mt-1 text-center">
+                                {pose.name}
+                              </p>
+
+                              <div
+                                className="flex items-center justify-center gap-1 text-[9px] font-mono text-zinc-400 group-hover:text-[#ffd700] py-0.5 mt-1 cursor-grab active:cursor-grabbing border border-dashed border-white/10 group-hover:border-[#ffd700]/50 rounded bg-black/30"
+                                title="Arraste esta pose para o Inventário de Acesso das Rooms!"
+                              >
+                                <GripVertical className="w-2.5 h-2.5 text-[#ffd700]" />
+                                <span>Arraste p/ Rooms</span>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-1.5 mt-2">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onApplyPose(pose.id);
+                                    showToast(`Pose "${pose.name}" aplicada ao Avatar!`);
+                                  }}
+                                  className={`py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                                    pose.applied
+                                      ? 'bg-[#ffd700] text-black'
+                                      : 'bg-zinc-800 hover:bg-[#d4af37] hover:text-black text-zinc-200'
+                                  }`}
+                                >
+                                  {pose.applied ? '✓ Ativa' : 'Aplicar'}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAddPoseToRoomAccess(pose);
+                                  }}
+                                  className="py-1 rounded text-[10px] font-bold bg-[#ffd700]/15 hover:bg-[#ffd700] text-[#ffd700] hover:text-black border border-[#ffd700]/30 transition-all cursor-pointer flex items-center justify-center gap-0.5"
+                                  title="Adicionar aos slots de Acesso das Rooms"
+                                >
+                                  <Plus className="w-2.5 h-2.5" />
+                                  <span>Rooms</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+
+                {(selectedCategory === 'todos' || ['salas', 'mobilia', 'itens', 'avatar'].includes(selectedCategory)) && filteredUserInventory.length > 0 && (
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-4">
                     <div className="col-span-full mb-2">
                       <span className="text-xs font-bold text-zinc-400">Arquivos e Modelos do Usuário</span>
@@ -943,7 +1449,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                             {item.thumbUrl ? (
                               <img
                                 src={item.thumbUrl}
-                                alt={item.name}
+                                alt={item.displayName || item.name || 'item'}
                                 className="w-full h-full object-cover filter contrast-110"
                                 referrerPolicy="no-referrer"
                               />
@@ -981,14 +1487,42 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                 </button>
               </div>
 
+              {/* Loja Category Filter Tabs */}
+              <div className="flex items-center gap-1.5 pb-2.5 overflow-x-auto scrollbar-none">
+                {[
+                  { id: 'todos', label: 'Todos', icon: '🌟' },
+                  { id: 'acessorios', label: 'Acessórios', icon: '👑' },
+                  { id: 'avatar', label: 'Avatares', icon: '👤' },
+                  { id: 'poses', label: 'Poses', icon: '💃' },
+                  { id: 'itens', label: 'Itens 3D', icon: '📦' },
+                ].map((cat) => {
+                  const isSelected = selectedLojaCategory === cat.id;
+                  return (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setSelectedLojaCategory(cat.id as any)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 flex-shrink-0 ${
+                        isSelected
+                          ? 'bg-gradient-to-r from-[#d4af37] to-[#ffd700] text-black shadow-md'
+                          : 'bg-[#14151b] border border-[#22242d] text-zinc-400 hover:text-white hover:border-zinc-700'
+                      }`}
+                    >
+                      <span>{cat.icon}</span>
+                      <span>{cat.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
               {/* Search Bar */}
-              <div className="relative mb-3">
+              <div className="relative mb-2">
                 <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Buscar avatares, acessórios, drones..."
+                  placeholder="Buscar avatares, acessórios, poses, drones..."
                   className="w-full bg-[#14151b] border border-[#22242d] rounded-xl pl-9 pr-4 py-2 text-xs text-zinc-200 placeholder-zinc-500 outline-none focus:border-[#d4af37]"
                 />
               </div>
@@ -1245,40 +1779,311 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                     })}
                   </div>
                 </div>
+
+                {/* 3. Poses da Loja */}
+                {(selectedLojaCategory === 'todos' || selectedLojaCategory === 'poses') && storePoses.length > 0 && (
+                  <div className="pt-2">
+                    <div className="flex items-center justify-between pb-2 border-b border-white/10 mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm">💃</span>
+                        <span className="text-[11px] font-bold tracking-wider text-[#ffd700] uppercase">
+                          POSES DO AVATAR NA LOJA
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-zinc-400 font-mono">
+                        {storePoses.length} poses
+                      </span>
+                    </div>
+
+                    <p className="text-[11px] text-zinc-400 mb-2.5">
+                      Clique em qualquer pose para visualizar no amostrador (pedestal 3D) ou adicione ao seu Inventário para usar nas salas!
+                    </p>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      {storePoses.map((pose) => {
+                        const isInspectingPose = activePose === pose.name;
+                        const isOwned = pose.owned;
+
+                        return (
+                          <div
+                            key={pose.id}
+                            draggable
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData(
+                                'application/json',
+                                JSON.stringify({ type: 'pose', pose })
+                              );
+                              e.dataTransfer.effectAllowed = 'copyMove';
+                            }}
+                            onClick={() => {
+                              onApplyPose(pose.id);
+                              setSelectedItemToInspect(null);
+                              setSelectedAccessoryId(null);
+                              showToast(`💃 Amostrando pose "${pose.name}" no pedestal 3D!`);
+                            }}
+                            className={`rounded-xl border p-2.5 flex flex-col justify-between transition-all cursor-pointer ${
+                              isInspectingPose
+                                ? 'bg-[#181a24] border-[#ffd700] ring-1 ring-[#ffd700]/70'
+                                : 'bg-[#121317] border-[#22242d] hover:border-zinc-500'
+                            }`}
+                          >
+                            <div className="relative aspect-square w-full rounded-lg overflow-hidden bg-[#0a0b0d] mb-2 flex items-center justify-center">
+                              {pose.thumbnailUrl ? (
+                                <img
+                                  src={pose.thumbnailUrl}
+                                  alt={pose.name}
+                                  className="w-full h-full object-cover"
+                                  referrerPolicy="no-referrer"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-900/80 text-zinc-400">
+                                  <span className="text-3xl mb-1">💃</span>
+                                  <span className="text-[10px] font-mono text-zinc-500">Pose 3D</span>
+                                </div>
+                              )}
+                              <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/80 border border-[#d4af37]/60 text-[9px] font-bold text-[#ffd700]">
+                                💃 POSE
+                              </span>
+                              {isInspectingPose && (
+                                <span className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-[#ffd700] text-black text-[9px] font-bold">
+                                  Visualizando
+                                </span>
+                              )}
+                            </div>
+
+                            <h4 className="text-xs font-bold text-zinc-100 truncate">{pose.name}</h4>
+                            <p className="text-[10px] text-zinc-400 truncate mb-1">
+                              {pose.description || (pose.associatedAvatarNames?.length ? `Vinculada a ${pose.associatedAvatarNames.join(', ')}` : 'Universal')}
+                            </p>
+
+                            <div className="flex items-center justify-between text-[11px] font-semibold text-[#ffd700] mb-2">
+                              <span>
+                                {pose.price && pose.price > 0 ? `🪙 ${pose.price}` : 'Grátis'}
+                              </span>
+                              <span className="text-[9px] text-zinc-400 uppercase font-mono">
+                                {pose.rarity || 'RARO'}
+                              </span>
+                            </div>
+
+                            {/* Drag handle */}
+                            <div
+                              className="flex items-center justify-center gap-1 text-[9px] font-mono text-zinc-400 hover:text-[#ffd700] py-0.5 mb-2 cursor-grab active:cursor-grabbing border border-dashed border-white/10 hover:border-[#ffd700]/50 rounded bg-black/30"
+                              title="Arraste esta Pose para os slots do Inventário de Acesso das Rooms!"
+                            >
+                              <GripVertical className="w-2.5 h-2.5 text-[#ffd700]" />
+                              <span>Arraste p/ Rooms</span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onApplyPose(pose.id);
+                                  showToast(`Pose "${pose.name}" aplicada no mostrador 3D!`);
+                                }}
+                                className={`py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                                  isInspectingPose
+                                    ? 'bg-[#ffd700] text-black font-bold'
+                                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200'
+                                }`}
+                              >
+                                {isInspectingPose ? '✓ No Pedestal' : 'Visualizar'}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (onAcquirePose) onAcquirePose(pose.id);
+                                  if (onSaveToInventory) onSaveToInventory(pose);
+                                  showToast(`Pose "${pose.name}" colocada no seu Inventário!`);
+                                }}
+                                className="py-1.5 rounded-lg bg-[#ffd700]/20 hover:bg-[#ffd700] text-[#ffd700] hover:text-black border border-[#ffd700]/50 text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1"
+                              >
+                                <span>{isOwned ? 'Inventário ✓' : 'Comprar'}</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ) : (
             /* TAB: POSES */
             <div className="flex-1 flex flex-col p-6 overflow-hidden">
-              <h2 className="text-sm md:text-base font-serif text-zinc-200 tracking-wide pb-4 border-b border-white/5">
-                Poses do Avatar
-              </h2>
-              <div className="flex-1 overflow-y-auto pt-4 space-y-3">
-                {poses.map((pose) => (
-                  <div
-                    key={pose.id}
-                    className="p-3 rounded-xl bg-[#14151b] border border-white/10 flex items-center justify-between"
-                  >
-                    <div>
-                      <p className="text-xs font-bold text-white">{pose.name}</p>
-                      <p className="text-[10px] text-zinc-400">
-                        {pose.applied ? 'Ativa no avatar' : 'Disponível'}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onApplyPose(pose.id);
-                        showToast(`Pose "${pose.name}" aplicada!`);
+              <div className="flex items-center justify-between pb-3 border-b border-white/5">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">💃</span>
+                  <h2 className="text-sm md:text-base font-serif text-zinc-200 tracking-wide">
+                    Poses do Avatar
+                  </h2>
+                </div>
+                <span className="text-[10px] text-zinc-400 font-mono">
+                  {poses.length} poses disponíveis
+                </span>
+              </div>
+
+              <p className="text-[11px] text-zinc-400 my-2">
+                Arraste qualquer pose para os slots da barra inferior ou clique em <strong>Rooms</strong> para adicionar ao Acesso Rápido das salas 3D!
+              </p>
+
+              <div className="flex-1 overflow-y-auto pt-2 space-y-2.5 pr-1 scrollbar-thin scrollbar-thumb-zinc-800">
+                {poses.map((pose) => {
+                  const isDragOver = dragOverPoseId === pose.id;
+                  const isRestricted = Boolean(
+                    pose.associatedAvatarIds && pose.associatedAvatarIds.length > 0
+                  );
+                  const isAvatarCompatible =
+                    !isRestricted ||
+                    pose.associatedAvatarIds!.some(
+                      (id) => ownedAvatarIds.includes(id) || selectedAvatarId === id
+                    );
+                  const isLocked = isRestricted && !isAvatarCompatible;
+                  const isFreeOrOwned = pose.owned || !pose.price || pose.price === 0;
+
+                  return (
+                    <div
+                      key={pose.id}
+                      draggable={!isLocked}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData(
+                          'application/json',
+                          JSON.stringify({ type: 'pose', pose })
+                        );
+                        e.dataTransfer.effectAllowed = 'copyMove';
                       }}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        pose.applied ? 'bg-[#ffd700] text-black' : 'bg-zinc-800 text-zinc-200'
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'copy';
+                        if (dragOverPoseId !== pose.id) {
+                          setDragOverPoseId(pose.id);
+                        }
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverPoseId === pose.id) {
+                          setDragOverPoseId(null);
+                        }
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setDragOverPoseId(null);
+                        try {
+                          const rawData = e.dataTransfer.getData('application/json');
+                          if (rawData) {
+                            const payload = JSON.parse(rawData);
+                            if (payload.type === 'avatar' && payload.avatar) {
+                              handleLinkAvatarToPoseAndRoomAccess(payload.avatar, pose);
+                            }
+                          }
+                        } catch (err) {
+                          console.warn('Drop on pose card error:', err);
+                        }
+                      }}
+                      className={`rounded-xl border p-3 transition-all flex flex-col justify-between select-none ${
+                        isDragOver
+                          ? 'bg-[#1a1c26] border-[#ffd700] ring-2 ring-[#ffd700] scale-[1.01] shadow-[0_0_16px_rgba(255,215,0,0.35)]'
+                          : isLocked
+                          ? 'bg-[#0f1013] border-white/5 opacity-70'
+                          : pose.applied
+                          ? 'bg-[#15171e] border-[#d4af37] ring-1 ring-[#d4af37]/50 shadow-[0_0_12px_rgba(212,175,55,0.2)]'
+                          : 'bg-[#121317] border-[#22242d] hover:border-zinc-700'
                       }`}
                     >
-                      {pose.applied ? 'Ativa' : 'Aplicar'}
-                    </button>
-                  </div>
-                ))}
+                      <div className="flex items-center gap-3">
+                        {/* Pose Thumbnail */}
+                        <div className="w-12 h-12 rounded-lg overflow-hidden bg-black/50 flex-shrink-0 border border-white/10 relative">
+                          {pose.thumbnailUrl ? (
+                            <img
+                              src={pose.thumbnailUrl}
+                              alt={pose.name}
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-zinc-500 text-xs">
+                              💃
+                            </div>
+                          )}
+                          {pose.applied && (
+                            <div className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-[#ffd700] text-black flex items-center justify-center text-[9px] font-bold">
+                              ✓
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Pose Info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-1 mb-0.5">
+                            <h4 className="text-xs font-serif font-bold text-white truncate">
+                              {pose.name}
+                            </h4>
+                            {pose.applied ? (
+                              <span className="text-[10px] font-mono text-[#ffd700] flex items-center gap-0.5 font-bold">
+                                Ativa
+                              </span>
+                            ) : isLocked ? (
+                              <span className="text-[10px] font-mono text-red-400 flex items-center gap-0.5">
+                                <Lock className="w-2.5 h-2.5" /> Bloqueada
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="text-[10px] text-zinc-400 truncate">
+                            {pose.description || (isRestricted ? `Vinculada a ${pose.associatedAvatarNames?.join(', ')}` : 'Universal para todas as salas')}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Drop hint when an avatar is dragged over */}
+                      {isDragOver && (
+                        <div className="my-1.5 py-1 px-2 rounded-lg bg-[#ffd700]/20 border border-[#ffd700] text-[#ffd700] text-[10px] font-bold flex items-center justify-center gap-1 animate-pulse">
+                          <span>✨</span>
+                          <span>Solte o Avatar aqui para vincular & adicionar às Rooms!</span>
+                        </div>
+                      )}
+
+                      {/* Drag handle */}
+                      <div
+                        className="flex items-center justify-center gap-1 text-[9px] font-mono text-zinc-400 hover:text-[#ffd700] py-0.5 mt-2 cursor-grab active:cursor-grabbing border border-dashed border-white/10 hover:border-[#ffd700]/50 rounded bg-black/30"
+                        title="Arraste esta Pose para os slots do Inventário de Acesso das Rooms!"
+                      >
+                        <GripVertical className="w-2.5 h-2.5 text-[#ffd700]" />
+                        <span>Arraste p/ Rooms</span>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-1.5 mt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onApplyPose(pose.id);
+                            showToast(`Pose "${pose.name}" aplicada ao Avatar!`);
+                          }}
+                          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                            pose.applied
+                              ? 'bg-[#d4af37] text-black font-bold'
+                              : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200'
+                          }`}
+                        >
+                          <span>{pose.applied ? '✓ Ativa' : 'Aplicar'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleAddPoseToRoomAccess(pose)}
+                          className="px-3 py-1.5 rounded-lg bg-[#ffd700]/15 hover:bg-[#ffd700] text-[#ffd700] hover:text-black border border-[#ffd700]/40 text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1"
+                          title="Adicionar esta pose ao Inventário de Acesso das Rooms"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Rooms</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1308,14 +2113,14 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                 Voltar ao Avatar 👤
               </button>
             </div>
-          ) : activeSelectedAccessory ? (
+          ) : (activeSelectedAccessory || selectedAccessoryId) ? (
             /* Banner & Gizmo Mode Controls when adjusting Accessory on Avatar */
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 px-4 py-2.5 rounded-2xl bg-black/90 border border-[#ffd700] backdrop-blur-md flex flex-col items-center gap-2 shadow-2xl animate-fade-in">
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-1.5 text-xs text-[#ffd700] font-bold">
                   <span>👑</span>
                   <span>Ajustando Acessório:</span>
-                  <span className="text-white">{activeSelectedAccessory.name}</span>
+                  <span className="text-white">{activeSelectedAccessory?.name || 'Acessório Selecionado'}</span>
                 </div>
 
                 {/* Gizmo Mode Switcher */}
@@ -1367,6 +2172,17 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                   title="Trava o acessório exatamente na posição atual do seu avatar"
                 >
                   <span>{isPositionLocked ? '🔒 Posição Travada' : '🔓 Travar no Avatar'}</span>
+                </button>
+
+                {/* Save to Principal Avatar Definition */}
+                <button
+                  type="button"
+                  onClick={handleSaveToPrincipalAvatar}
+                  className="px-3.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer flex items-center gap-1.5 transition-all bg-gradient-to-r from-emerald-500 to-teal-400 hover:brightness-110 text-black shadow-lg"
+                  title="Salva esta posição e definição do acessório no avatar principal"
+                >
+                  <Save className="w-3.5 h-3.5 text-black" />
+                  <span>Salvar no Avatar Principal</span>
                 </button>
               </div>
             </div>
@@ -1432,6 +2248,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
               }
               selectedItemToInspect={selectedItemToInspect}
               selectedAccessoryId={selectedAccessoryId}
+              selectedAccessoryItem={activeSelectedAccessory}
               onSelectAccessory={(id) => setSelectedAccessoryId(id)}
               onUpdateAccessoryTransform={handleUpdateAccessoryTransform}
               gizmoMode={gizmoMode}
@@ -1505,25 +2322,45 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
               </div>
             </div>
 
-            {/* In Loja view: Add to Cart CTA */}
+            {/* In Loja view: Action & Add to Cart CTAs */}
             {activeTab === 'loja' && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (selectedItemToInspect) {
-                    addToCart(selectedItemToInspect);
-                  } else {
-                    addToCart(currentAvatar);
-                  }
-                }}
-                className="w-full max-w-md py-3.5 px-8 rounded-xl bg-gradient-to-r from-[#9e763b] via-[#b58c54] to-[#9e763b] text-black font-semibold text-sm tracking-wide shadow-[0_8px_25px_rgba(181,140,84,0.35)] hover:brightness-110 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
-              >
-                <ShoppingCart className="w-4 h-4 text-black" />
-                <span>
-                  Adicionar ao Carrinho (
-                  {selectedItemToInspect ? selectedItemToInspect.name : currentAvatar.name})
-                </span>
-              </button>
+              <div className="w-full max-w-md flex flex-col gap-2">
+                {activeSelectedAccessory && (
+                  <button
+                    type="button"
+                    onClick={handleSaveToPrincipalAvatar}
+                    className="w-full py-2.5 px-6 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 text-black font-extrabold text-xs tracking-wide shadow-[0_4px_20px_rgba(16,185,129,0.35)] hover:brightness-110 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <Save className="w-4 h-4 text-black" />
+                    <span>Salvar Ajuste de "{activeSelectedAccessory.name}" no Avatar</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedItemToInspect) {
+                      addToCart(selectedItemToInspect);
+                    } else if (activeSelectedAccessory) {
+                      addToCart(activeSelectedAccessory);
+                    } else {
+                      addToCart(currentAvatar);
+                    }
+                  }}
+                  className="w-full py-3 px-8 rounded-xl bg-gradient-to-r from-[#9e763b] via-[#b58c54] to-[#9e763b] text-black font-semibold text-sm tracking-wide shadow-[0_8px_25px_rgba(181,140,84,0.35)] hover:brightness-110 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <ShoppingCart className="w-4 h-4 text-black" />
+                  <span>
+                    Adicionar ao Carrinho (
+                    {selectedItemToInspect
+                      ? selectedItemToInspect.name
+                      : activeSelectedAccessory
+                      ? activeSelectedAccessory.name
+                      : currentAvatar.name}
+                    )
+                  </span>
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -1570,12 +2407,50 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
               const isLocked = isRestricted && !userOwnsAvatar;
               const isFreeOrOwned =
                 pose.price === undefined || pose.price === 0 || pose.owned;
+              const isDragOver = dragOverPoseId === pose.id;
 
               return (
                 <div
                   key={pose.id}
-                  className={`rounded-xl border p-3.5 transition-all flex flex-col justify-between ${
-                    isLocked
+                  draggable={true}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(
+                      'application/json',
+                      JSON.stringify({ type: 'pose', pose })
+                    );
+                    e.dataTransfer.effectAllowed = 'copyMove';
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'copy';
+                    if (dragOverPoseId !== pose.id) {
+                      setDragOverPoseId(pose.id);
+                    }
+                  }}
+                  onDragLeave={() => {
+                    if (dragOverPoseId === pose.id) {
+                      setDragOverPoseId(null);
+                    }
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragOverPoseId(null);
+                    try {
+                      const rawData = e.dataTransfer.getData('application/json');
+                      if (rawData) {
+                        const payload = JSON.parse(rawData);
+                        if (payload.type === 'avatar' && payload.avatar) {
+                          handleLinkAvatarToPoseAndRoomAccess(payload.avatar, pose);
+                        }
+                      }
+                    } catch (err) {
+                      console.warn('Drop on pose card error:', err);
+                    }
+                  }}
+                  className={`rounded-xl border p-3.5 transition-all flex flex-col justify-between select-none ${
+                    isDragOver
+                      ? 'bg-[#1a1c26] border-[#ffd700] ring-2 ring-[#ffd700] scale-[1.02] shadow-[0_0_20px_rgba(255,215,0,0.4)]'
+                      : isLocked
                       ? 'bg-[#0f1013] border-white/5 opacity-75 hover:opacity-100'
                       : pose.applied
                       ? 'bg-[#15171e] border-[#d4af37]/80 ring-1 ring-[#d4af37]/40'
@@ -1597,7 +2472,15 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                     ) : null}
                   </div>
 
-                  <div className="mb-3">
+                  {/* Drop hint when an avatar is dragged over */}
+                  {isDragOver && (
+                    <div className="my-1.5 py-1 px-2 rounded-lg bg-[#ffd700]/20 border border-[#ffd700] text-[#ffd700] text-[10px] font-bold flex items-center justify-center gap-1 animate-pulse">
+                      <span>✨</span>
+                      <span>Solte o Avatar aqui para vincular & adicionar ao Acesso das Rooms!</span>
+                    </div>
+                  )}
+
+                  <div className="mb-2">
                     {isRestricted ? (
                       <span
                         className={`text-[9px] font-mono px-2 py-0.5 rounded border inline-flex items-center gap-1 max-w-full truncate ${
@@ -1622,6 +2505,15 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                         <span>Universal (Todas as rooms)</span>
                       </span>
                     )}
+                  </div>
+
+                  {/* Drag indicator handle */}
+                  <div
+                    className="flex items-center justify-center gap-1 text-[9px] font-mono text-zinc-400 hover:text-[#ffd700] py-0.5 mb-2 cursor-grab active:cursor-grabbing border border-dashed border-white/10 hover:border-[#ffd700]/50 rounded bg-black/30"
+                    title="Arraste esta Pose para o Inventário de Acesso das Rooms!"
+                  >
+                    <GripVertical className="w-2.5 h-2.5 text-[#ffd700]" />
+                    <span>Arraste p/ Rooms</span>
                   </div>
 
                   {isLocked ? (
@@ -1649,7 +2541,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                       <span>Comprar ({pose.price} 🪙)</span>
                     </button>
                   ) : (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
                       <button
                         type="button"
                         onClick={() => {
@@ -1668,14 +2560,24 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
 
                       <button
                         type="button"
+                        onClick={() => handleAddPoseToRoomAccess(pose)}
+                        className="px-2.5 py-1.5 rounded-lg bg-[#ffd700]/15 hover:bg-[#ffd700] text-[#ffd700] hover:text-black border border-[#ffd700]/40 text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1"
+                        title="Adicionar esta pose ao Inventário de Acesso das Rooms"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Rooms</span>
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => {
                           onRemovePose(pose.id);
                           showToast(`Pose "${pose.name}" desativada.`);
                         }}
-                        className="flex-1 py-1.5 rounded-lg bg-zinc-900 border border-white/5 hover:border-white/20 text-zinc-400 hover:text-white text-xs font-semibold transition-colors cursor-pointer flex items-center justify-center gap-1"
+                        className="p-1.5 rounded-lg bg-zinc-900 border border-white/5 hover:border-white/20 text-zinc-400 hover:text-white text-xs font-semibold transition-colors cursor-pointer flex items-center justify-center"
+                        title="Remover pose ativa"
                       >
                         <X className="w-3.5 h-3.5" />
-                        <span>Remover</span>
                       </button>
                     </div>
                   )}
@@ -1685,6 +2587,25 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* INVENTÁRIO DE ACESSO DAS ROOMS (BARRA INFERIOR DE SLOTS / ATALHOS) */}
+      <RoomAccessBar
+        slots={roomAccessSlots}
+        onUpdateSlots={handleUpdateRoomAccessSlots}
+        onSlotClick={(slot) => {
+          if (slot.type === 'avatar') {
+            setSelectedAvatarId(slot.itemId);
+            if (onSelectActiveAvatar) onSelectActiveAvatar(slot.itemId);
+            showToast(`Avatar "${slot.name}" selecionado.`);
+          } else {
+            onApplyPose(slot.itemId);
+            showToast(`Pose "${slot.name}" aplicada ao Avatar.`);
+          }
+        }}
+        activeAvatarId={selectedAvatarId}
+        activePoseId={poses.find((p) => p.applied)?.id}
+        onShowToast={showToast}
+      />
 
       {/* CART DRAWER / MODAL */}
       {isCartOpen && (
@@ -1859,6 +2780,114 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                       </button>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* Fonte do Modelo 3D para Persistência Total */}
+              {publishObjectType !== 'pose' && (
+                <div className="p-3 rounded-xl bg-black/60 border border-[#d4af37]/40 space-y-2.5">
+                  <label className="text-xs font-semibold text-[#ffd700] flex items-center gap-1">
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>Modelo 3D Original (Persistência ao Recarregar Página)</span>
+                  </label>
+
+                  <div className="grid grid-cols-3 gap-1.5 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setPublishModelSourceType('active')}
+                      className={`py-1.5 px-2 rounded-lg border text-center transition-all cursor-pointer ${
+                        publishModelSourceType === 'active'
+                          ? 'bg-[#ffd700]/25 border-[#ffd700] text-[#ffd700] font-bold'
+                          : 'bg-[#16171f] border-white/10 text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      🎯 Em Foco / Pedestal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPublishModelSourceType('inventory')}
+                      className={`py-1.5 px-2 rounded-lg border text-center transition-all cursor-pointer ${
+                        publishModelSourceType === 'inventory'
+                          ? 'bg-[#ffd700]/25 border-[#ffd700] text-[#ffd700] font-bold'
+                          : 'bg-[#16171f] border-white/10 text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      🎒 Do Inventário ({userInventory.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPublishModelSourceType('upload')}
+                      className={`py-1.5 px-2 rounded-lg border text-center transition-all cursor-pointer ${
+                        publishModelSourceType === 'upload'
+                          ? 'bg-[#ffd700]/25 border-[#ffd700] text-[#ffd700] font-bold'
+                          : 'bg-[#16171f] border-white/10 text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      📁 Upload .GLB
+                    </button>
+                  </div>
+
+                  {publishModelSourceType === 'active' && (
+                    <div className="text-[11px] text-zinc-300 bg-white/5 p-2 rounded-lg border border-white/10 flex items-center gap-2">
+                      <span className="text-emerald-400 font-bold">✓</span>
+                      <span>
+                        Usando modelo em foco:{' '}
+                        <strong className="text-white">
+                          {activeSelectedAccessory?.name || selectedItemToInspect?.name || currentAvatar?.name || 'Objeto do Pedestal'}
+                        </strong>
+                      </span>
+                    </div>
+                  )}
+
+                  {publishModelSourceType === 'inventory' && (
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-zinc-400">Escolha o item do seu inventário 3D:</label>
+                      <select
+                        value={publishSelectedInventoryId}
+                        onChange={(e) => {
+                          setPublishSelectedInventoryId(e.target.value);
+                          const chosen = userInventory.find((i) => i.id === e.target.value);
+                          if (chosen) {
+                            if (!newPublishName) setNewPublishName(chosen.displayName);
+                            if (chosen.thumbUrl) setPublishThumbnailUrl(chosen.thumbUrl);
+                          }
+                        }}
+                        className="w-full bg-[#1b1c24] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white outline-none focus:border-[#d4af37]"
+                      >
+                        <option value="">Selecione um item 3D...</option>
+                        {userInventory.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.displayName} ({item.type})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {publishModelSourceType === 'upload' && (
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-zinc-400">Arquivo .glb ou .gltf do seu computador:</label>
+                      <input
+                        type="file"
+                        accept=".glb,.gltf"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            setPublishUploadedFile(file);
+                            if (!newPublishName) {
+                              setNewPublishName(file.name.replace(/\.[^/.]+$/, ''));
+                            }
+                          }
+                        }}
+                        className="w-full text-xs text-zinc-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-[#d4af37] file:text-black hover:file:brightness-110 cursor-pointer"
+                      />
+                      {publishUploadedFile && (
+                        <p className="text-[10px] text-emerald-400">
+                          Arquivo pronto: {publishUploadedFile.name} ({(publishUploadedFile.size / 1024).toFixed(1)} KB)
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -82,9 +82,11 @@ export interface InventoryItem {
   id: string;
   fileName: string;
   displayName: string;
+  name?: string;
   thumbUrl: string;
-  type: 'Sala' | 'Avatar' | 'Item' | 'Acessorio';
-  createdAt: string;
+  thumbnailUrl?: string;
+  type: 'Sala' | 'Avatar' | 'Item' | 'Acessorio' | 'sala' | 'avatar' | 'item' | 'acessorio' | 'cenario' | 'movel' | 'objeto' | 'pose';
+  createdAt?: string;
   isScenario?: boolean;
   isAccessory?: boolean;
   actions?: ObjectAction[];
@@ -260,7 +262,7 @@ export interface CustomizationItem {
   id: string;
   code: string; // e.g. #H001, #C001, #S001, #AC01
   name: string;
-  category: 'chapeus' | 'casacos' | 'sapatos' | 'acessorios' | 'avatares' | 'publicados' | 'outros';
+  category: 'chapeus' | 'casacos' | 'sapatos' | 'acessorios' | 'avatares' | 'publicados' | 'outros' | 'avatar' | 'itens' | 'mobilia' | 'poses' | 'salas';
   thumb: string;
   owned: boolean;
   equipped: boolean;
@@ -268,6 +270,7 @@ export interface CustomizationItem {
   rarity?: 'COMUM' | 'RARO' | 'ÉLITE';
   description?: string;
   isPublishedByCreator?: boolean;
+  isUserPublished?: boolean;
   author?: string;
   fileBlobUrl?: string;
   originalItemId?: string;
@@ -309,6 +312,18 @@ export interface AvatarPoseConfig {
   associatedAvatarIds?: string[];
   associatedAvatarNames?: string[];
   rarity?: 'COMUM' | 'RARO' | 'ÉLITE';
+}
+
+export interface RoomAccessSlot {
+  slotIndex: number; // 0 to 7 (displayed as 1 to 8)
+  id: string; // unique slot item id
+  type: 'avatar' | 'pose';
+  name: string;
+  thumbnailUrl: string;
+  itemId: string; // avatar id or pose id
+  badge?: string;
+  avatarData?: StoreAvatar;
+  poseData?: AvatarPoseConfig;
 }
 
 export type StoreObjectType = 'avatar' | 'acessorio' | 'item' | 'pose' | 'sala' | 'moveis';
