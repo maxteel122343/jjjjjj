@@ -139,9 +139,10 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   const [activeAction, setActiveAction] = useState<ObjectAction | null>(null);
 
   // Categories in Inventário (including Acessórios!)
+  const [searchQueryInventory, setSearchQueryInventory] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<
-    'chapeus' | 'casacos' | 'sapatos' | 'acessorios' | 'avatares' | 'publicados' | 'todos'
-  >('avatares');
+    'todos' | 'avatar' | 'acessorios' | 'salas' | 'mobilia' | 'itens' | 'poses'
+  >('todos');
 
   // Loja state
   const [searchQuery, setSearchQuery] = useState('');
@@ -186,10 +187,25 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   // Filter items in Inventário
   const filteredInventoryItems = customizationItems.filter((item) => {
     if (!item.owned) return false;
+    const matchesSearch = item.name.toLowerCase().includes(searchQueryInventory.toLowerCase());
+    if (!matchesSearch) return false;
+
     if (selectedCategory === 'todos') return true;
-    if (selectedCategory === 'publicados') return item.isPublishedByCreator;
     if (selectedCategory === 'acessorios') return item.isAccessory || item.category === 'acessorios';
     return item.category === selectedCategory;
+  });
+
+  const filteredUserInventory = userInventory.filter((item) => {
+    const matchesSearch = item.name.toLowerCase().includes(searchQueryInventory.toLowerCase());
+    if (!matchesSearch) return false;
+
+    if (selectedCategory === 'todos') return true;
+    if (selectedCategory === 'salas') return item.type === 'sala' || item.type === 'cenario';
+    if (selectedCategory === 'mobilia') return item.type === 'movel';
+    if (selectedCategory === 'itens') return item.type === 'objeto';
+    if (selectedCategory === 'poses') return item.type === 'pose';
+    if (selectedCategory === 'avatar') return item.type === 'avatar';
+    return false;
   });
 
   // Filter avatars in Loja
@@ -678,6 +694,18 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                 <h2 className="text-sm md:text-base font-serif text-zinc-200 tracking-wide">
                   Inventário — Itens & Acessórios
                 </h2>
+              </div>
+              <div className="relative mb-4">
+                <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQueryInventory}
+                  onChange={(e) => setSearchQueryInventory(e.target.value)}
+                  placeholder="Buscar itens no inventário..."
+                  className="w-full bg-[#14151b] border border-[#22242d] rounded-xl pl-9 pr-4 py-2 text-xs text-zinc-200 placeholder-zinc-500 outline-none focus:border-[#d4af37]"
+                />
+              </div>
+              <div className="flex items-center justify-between pb-2">
                 <button
                   type="button"
                   onClick={() =>
@@ -690,111 +718,42 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                 </button>
               </div>
 
-              {/* Category Pills: Chapéus | Casacos | Sapatos | Acessórios | Avatares | Publicados */}
+              {/* Category Pills */}
               <div className="flex items-center gap-4 pb-4 border-b border-white/5 text-xs font-medium overflow-x-auto scrollbar-none">
-                <button
-                  type="button"
-                  onClick={() => setSelectedCategory('acessorios')}
-                  className={`flex items-center gap-1.5 transition-colors cursor-pointer pb-1 relative flex-shrink-0 ${
-                    selectedCategory === 'acessorios'
-                      ? 'text-zinc-100 font-semibold text-[#ffd700]'
-                      : 'text-zinc-500 hover:text-zinc-300'
-                  }`}
-                >
-                  <span>👑</span>
-                  <span>Acessórios</span>
-                  {selectedCategory === 'acessorios' && (
-                    <span className="absolute -bottom-1 inset-x-0 h-0.5 bg-[#ffd700]" />
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedCategory('chapeus')}
-                  className={`flex items-center gap-1.5 transition-colors cursor-pointer pb-1 relative flex-shrink-0 ${
-                    selectedCategory === 'chapeus'
-                      ? 'text-zinc-100 font-semibold'
-                      : 'text-zinc-500 hover:text-zinc-300'
-                  }`}
-                >
-                  <span>👒</span>
-                  <span>Chapéus</span>
-                  {selectedCategory === 'chapeus' && (
-                    <span className="absolute -bottom-1 inset-x-0 h-0.5 bg-[#d4af37]" />
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedCategory('casacos')}
-                  className={`flex items-center gap-1.5 transition-colors cursor-pointer pb-1 relative flex-shrink-0 ${
-                    selectedCategory === 'casacos'
-                      ? 'text-zinc-100 font-semibold'
-                      : 'text-zinc-500 hover:text-zinc-300'
-                  }`}
-                >
-                  <span>🧥</span>
-                  <span>Casacos</span>
-                  {selectedCategory === 'casacos' && (
-                    <span className="absolute -bottom-1 inset-x-0 h-0.5 bg-[#d4af37]" />
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedCategory('sapatos')}
-                  className={`flex items-center gap-1.5 transition-colors cursor-pointer pb-1 relative flex-shrink-0 ${
-                    selectedCategory === 'sapatos'
-                      ? 'text-zinc-100 font-semibold'
-                      : 'text-zinc-500 hover:text-zinc-300'
-                  }`}
-                >
-                  <span>👞</span>
-                  <span>Sapatos</span>
-                  {selectedCategory === 'sapatos' && (
-                    <span className="absolute -bottom-1 inset-x-0 h-0.5 bg-[#d4af37]" />
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedCategory('avatares')}
-                  className={`flex items-center gap-1.5 transition-colors cursor-pointer pb-1 relative flex-shrink-0 ${
-                    selectedCategory === 'avatares'
-                      ? 'text-zinc-100 font-semibold text-[#ffd700]'
-                      : 'text-zinc-500 hover:text-zinc-300'
-                  }`}
-                >
-                  <span>👤</span>
-                  <span>Avatares ({storeAvatars.filter((a) => a.owned).length})</span>
-                  {selectedCategory === 'avatares' && (
-                    <span className="absolute -bottom-1 inset-x-0 h-0.5 bg-[#ffd700]" />
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedCategory('publicados')}
-                  className={`flex items-center gap-1.5 transition-colors cursor-pointer pb-1 relative flex-shrink-0 ${
-                    selectedCategory === 'publicados'
-                      ? 'text-zinc-100 font-semibold text-[#d4af37]'
-                      : 'text-zinc-500 hover:text-zinc-300'
-                  }`}
-                >
-                  <span>✨</span>
-                  <span>Publicados</span>
-                  {selectedCategory === 'publicados' && (
-                    <span className="absolute -bottom-1 inset-x-0 h-0.5 bg-[#d4af37]" />
-                  )}
-                </button>
+                {[
+                  { id: 'todos', label: 'Todos', icon: '✨' },
+                  { id: 'avatar', label: 'Avatar', icon: '👤' },
+                  { id: 'acessorios', label: 'Acessórios', icon: '👑' },
+                  { id: 'salas', label: 'Salas', icon: '🏠' },
+                  { id: 'mobilia', label: 'Mobília', icon: '🪑' },
+                  { id: 'itens', label: 'Itens', icon: '📦' },
+                  { id: 'poses', label: 'Poses', icon: '💃' },
+                ].map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setSelectedCategory(cat.id as any)}
+                    className={`flex items-center gap-1.5 transition-colors cursor-pointer pb-1 relative flex-shrink-0 ${
+                      selectedCategory === cat.id
+                        ? 'text-zinc-100 font-semibold text-[#ffd700]'
+                        : 'text-zinc-500 hover:text-zinc-300'
+                    }`}
+                  >
+                    <span>{cat.icon}</span>
+                    <span>{cat.label}</span>
+                    {selectedCategory === cat.id && (
+                      <span className="absolute -bottom-1 inset-x-0 h-0.5 bg-[#ffd700]" />
+                    )}
+                  </button>
+                ))}
               </div>
 
               {/* Grid of Items or Avatars */}
               <div className="flex-1 overflow-y-auto pt-4 pr-1 scrollbar-thin scrollbar-thumb-zinc-800">
-                {selectedCategory === 'avatares' ? (
+                {selectedCategory === 'avatar' && (
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     {storeAvatars
-                      .filter((av) => av.owned)
+                      .filter((av) => av.owned && av.name.toLowerCase().includes(searchQueryInventory.toLowerCase()))
                       .map((av) => {
                         const isSelectedForPreview = selectedAvatarId === av.id;
                         return (
@@ -870,8 +829,13 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                         );
                       })}
                   </div>
-                ) : (
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                )}
+
+                {(selectedCategory === 'todos' || selectedCategory === 'acessorios') && filteredInventoryItems.length > 0 && (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-4">
+                    <div className="col-span-full mb-2">
+                      <span className="text-xs font-bold text-zinc-400">Acessórios de Avatar</span>
+                    </div>
                     {filteredInventoryItems.map((item) => {
                       const isAcc = item.isAccessory || item.category === 'acessorios';
                       const isInspectingThis = selectedItemToInspect?.id === item.id;
@@ -912,16 +876,6 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                                 ✓
                               </div>
                             )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onSaveToInventory?.(item);
-                              }}
-                              className="absolute top-1.5 left-1.5 bg-blue-600 hover:bg-blue-500 text-white p-1 rounded-full z-10 shadow-lg transition-colors border border-blue-400"
-                              title="Salvar no Inventário de Criação (para usar na Room)"
-                            >
-                              <Download size={12} />
-                            </button>
                             {item.actions && item.actions.length > 0 && (
                               <div className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-cyan-950/80 border border-cyan-400/50 text-[9px] font-bold text-cyan-300">
                                 ⚡ {item.actions.length} action(s)
@@ -950,15 +904,15 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleSelectItem(item);
+                                  onToggleEquipItem(item.id);
                                 }}
-                                className={`w-full py-1 rounded text-[10px] font-semibold transition-colors cursor-pointer ${
-                                  isInspectingThis
-                                    ? 'bg-[#ffd700] text-black font-bold'
-                                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+                                className={`w-full py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                                  item.equipped
+                                    ? 'bg-zinc-800 text-zinc-300'
+                                    : 'bg-[#d4af37] hover:brightness-110 text-black'
                                 }`}
                               >
-                                {isInspectingThis ? 'Inspecionando' : 'Ver no Pedestal'}
+                                {item.equipped ? 'Remover' : 'Equipar'}
                               </button>
                             )}
                           </div>
@@ -967,6 +921,47 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                     })}
                   </div>
                 )}
+
+                {(selectedCategory === 'todos' || ['salas', 'mobilia', 'itens', 'poses', 'avatar'].includes(selectedCategory)) && filteredUserInventory.length > 0 && (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-4">
+                    <div className="col-span-full mb-2">
+                      <span className="text-xs font-bold text-zinc-400">Arquivos e Modelos do Usuário</span>
+                    </div>
+                    {filteredUserInventory.map((item) => {
+                      return (
+                        <div
+                          key={item.id}
+                          className="relative rounded-xl border p-2 flex flex-col justify-between transition-all bg-[#121317] border-[#22242d]"
+                        >
+                          <div className="flex items-center justify-between text-[10px] mb-1">
+                            <span className="font-mono font-medium text-[#14b8a6]">
+                              {item.type.toUpperCase()}
+                            </span>
+                          </div>
+
+                          <div className="relative aspect-square w-full rounded-lg overflow-hidden bg-[#0d0e11] my-1 flex items-center justify-center">
+                            {item.thumbUrl ? (
+                              <img
+                                src={item.thumbUrl}
+                                alt={item.name}
+                                className="w-full h-full object-cover filter contrast-110"
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center bg-zinc-800">
+                                <span className="text-zinc-500 text-xs">Sem Foto</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <p className="text-[11px] font-medium text-zinc-200 truncate mt-1 text-center">
+                            {item.displayName || item.name}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}}
               </div>
             </div>
           ) : activeTab === 'loja' ? (
