@@ -73,6 +73,7 @@ export const ProjectSaveRestoreModal: React.FC<ProjectSaveRestoreModalProps> = (
   const [includeBinaryGlbs, setIncludeBinaryGlbs] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Import State
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -91,6 +92,7 @@ export const ProjectSaveRestoreModal: React.FC<ProjectSaveRestoreModalProps> = (
   const handleExportProject = async () => {
     setIsExporting(true);
     setExportSuccess(false);
+    setExportError(null);
 
     try {
       let filesMap: Record<string, string> = {};
@@ -164,7 +166,7 @@ export const ProjectSaveRestoreModal: React.FC<ProjectSaveRestoreModalProps> = (
       setExportSuccess(true);
     } catch (err: any) {
       console.error('Export error:', err);
-      alert('Erro ao exportar projeto: ' + (err.message || String(err)));
+      setExportError('Erro ao exportar projeto: ' + (err.message || String(err)));
     } finally {
       setIsExporting(false);
     }
@@ -412,6 +414,14 @@ export const ProjectSaveRestoreModal: React.FC<ProjectSaveRestoreModalProps> = (
                     <strong>Download concluído!</strong> O arquivo do projeto foi salvo no seu computador.
                     Guarde-o em local seguro para restaurar quando quiser.
                   </div>
+                </div>
+              )}
+
+              {/* Error Notification */}
+              {exportError && (
+                <div className="p-3 rounded-xl bg-red-950/60 border border-red-500/60 text-red-200 text-xs flex items-center gap-2 animate-fade-in">
+                  <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
+                  <div>{exportError}</div>
                 </div>
               )}
 
