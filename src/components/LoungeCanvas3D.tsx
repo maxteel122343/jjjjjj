@@ -34,8 +34,6 @@ interface LoungeCanvas3DProps {
   gizmoMode?: GizmoMode;
   onChangeTransform?: (newTransform: AvatarTransform) => void;
   spotVisualConfig?: SpotVisualConfig;
-  user?: CreatorUser | null;
-  onAccessDenied?: () => void;
 }
 
 export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
@@ -54,8 +52,6 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
   gizmoMode = 'mover',
   onChangeTransform,
   spotVisualConfig,
-  user,
-  onAccessDenied,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const playerGroupRef = useRef<THREE.Group | null>(null);

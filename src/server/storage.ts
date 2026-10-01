@@ -58,26 +58,22 @@ export function getMissingStorageEnv(): string[] {
   return missing;
 }
 
-export interface MockStorageObject {
-  buffer: Buffer;
-  contentLength: number;
-  etag: string;
-  checksumSha256?: string;
-  mimeType: string;
-}
-
-const mockStorageMap = new Map<string, MockStorageObject>();
-
-export function saveMockStorageObject(key: string, obj: MockStorageObject): void {
-  mockStorageMap.set(key, obj);
-}
-
-export function getMockStorageObject(key: string): MockStorageObject | undefined {
-  return mockStorageMap.get(key);
-}
-
 export function checkServerConfig(): { error: 'DATABASE_CONFIG_MISSING' | 'STORAGE_CONFIG_MISSING'; message: string } | null {
-  // Retorna null pois há fallback em memória ativo quando as variáveis não estão configuradas
+  if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.trim()) {
+    return {
+      error: 'DATABASE_CONFIG_MISSING',
+      message: 'Variável ausente: DATABASE_URL',
+    };
+  }
+
+  const missingS3 = getMissingStorageEnv();
+  if (missingS3.length > 0) {
+    return {
+      error: 'STORAGE_CONFIG_MISSING',
+      message: `Variável ausente: ${missingS3.join(', ')}`,
+    };
+  }
+
   return null;
 }
 
@@ -122,10 +118,10 @@ function getS3Client(): S3Client {
 export const storageService = {
   getBucket(): string {
     const bucket = process.env.S3_BUCKET;
-    if (bucket && bucket.trim()) {
-      return bucket.trim();
+    if (!bucket) {
+      throw new Error('S3_BUCKET não está configurado.');
     }
-    return 'in-memory-bucket';
+    return bucket;
   },
 
   async generatePresignedPutUrl(params: {
@@ -133,10 +129,6 @@ export const storageService = {
     byteSize: number;
     sha256Hex: string;
   }): Promise<string> {
-    if (!isStorageConfigured()) {
-      return `/api/v1/mock-storage/upload?key=${encodeURIComponent(params.storageKey)}`;
-    }
-
     const client = getS3Client();
     const bucket = this.getBucket();
     const sha256Base64 = Buffer.from(params.sha256Hex, 'hex').toString('base64');
@@ -156,18 +148,6 @@ export const storageService = {
   },
 
   async headObject(storageKey: string): Promise<{ contentLength: number; etag: string; checksumSha256?: string }> {
-    if (!isStorageConfigured()) {
-      const mockItem = mockStorageMap.get(storageKey);
-      if (!mockItem) {
-        throw new Error('STORAGE_EMPTY_OR_UNAVAILABLE');
-      }
-      return {
-        contentLength: mockItem.contentLength,
-        etag: mockItem.etag,
-        checksumSha256: mockItem.checksumSha256,
-      };
-    }
-
     const client = getS3Client();
     const bucket = this.getBucket();
 
@@ -194,10 +174,6 @@ export const storageService = {
     storageKey: string;
     filename: string;
   }): Promise<string> {
-    if (!isStorageConfigured()) {
-      return `/api/v1/mock-storage/download?key=${encodeURIComponent(params.storageKey)}`;
-    }
-
     const client = getS3Client();
     const bucket = this.getBucket();
 

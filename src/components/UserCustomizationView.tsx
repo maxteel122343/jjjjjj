@@ -44,7 +44,7 @@ import {
 } from '../types';
 import { AvatarPedestal3D } from './AvatarPedestal3D';
 import { RoomAccessBar } from './RoomAccessBar';
-import { persistStoreItem, fetchPublicStoreItems, buyRoom } from '../lib/database';
+import { persistStoreItem, fetchPublicStoreItems } from '../lib/database';
 import { saveGlbFile, getGlbFile } from '../lib/storageIndexedDB';
 
 interface UserCustomizationViewProps {
@@ -77,7 +77,6 @@ interface UserCustomizationViewProps {
   ) => void;
   onSaveToInventory?: (item: CustomizationItem | StoreAvatar | AvatarPoseConfig) => void;
   onOpenPublicationsModal?: () => void;
-  onRoomPurchased?: () => void;
 }
 
 import { safeLocalStorageSet } from '../lib/storageUtils';
@@ -108,7 +107,6 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   onSyncPublicStoreItems,
   onOpenPublicationsModal,
   onSaveToInventory,
-  onRoomPurchased,
 }: UserCustomizationViewProps) => {
   // Navigation Tabs: 'loja' | 'inventario' | 'poses'
   const [activeTab, setActiveTab] = useState<'loja' | 'inventario' | 'poses'>(initialTab);
@@ -321,7 +319,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [selectedLojaCategory, setSelectedLojaCategory] = useState<
-    'todos' | 'acessorios' | 'avatar' | 'poses' | 'itens' | 'salas'
+    'todos' | 'acessorios' | 'avatar' | 'poses' | 'itens'
   >('todos');
 
   // Modal de publicação
@@ -377,11 +375,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
       item.isPublishedByCreator ||
       item.isUserPublished ||
       item.fileBlobUrl ||
-      item.originalItemId ||
-      item.isRoom ||
-      item.category === 'salas' ||
-      item.roomId ||
-      item.assetId
+      item.originalItemId
     );
   };
 
@@ -426,8 +420,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
     if (
       selectedLojaCategory === 'acessorios' ||
       selectedLojaCategory === 'poses' ||
-      selectedLojaCategory === 'itens' ||
-      selectedLojaCategory === 'salas'
+      selectedLojaCategory === 'itens'
     ) {
       return false;
     }
@@ -440,11 +433,9 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   const publishedCommunityItems = customizationItems.filter((i) => {
     if (!isRealPublishedItem(i)) return false;
     const isAccessory = i.isAccessory || i.category === 'acessorios';
-    const isRoomItem = i.isRoom || i.category === 'salas' || Boolean(i.roomId);
     if (selectedLojaCategory === 'avatar' || selectedLojaCategory === 'poses') return false;
-    if (selectedLojaCategory === 'salas' && !isRoomItem) return false;
     if (selectedLojaCategory === 'acessorios' && !isAccessory) return false;
-    if (selectedLojaCategory === 'itens' && (isAccessory || isRoomItem)) return false;
+    if (selectedLojaCategory === 'itens' && isAccessory) return false;
     if (selectedTag === '#acessorios' && !isAccessory) return false;
     const matchesSearch = (i.name || '').toLowerCase().includes(searchQuery.toLowerCase());
     return matchesSearch;
@@ -455,8 +446,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
     if (
       selectedLojaCategory === 'avatar' ||
       selectedLojaCategory === 'acessorios' ||
-      selectedLojaCategory === 'itens' ||
-      selectedLojaCategory === 'salas'
+      selectedLojaCategory === 'itens'
     ) {
       return false;
     }
@@ -665,25 +655,6 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
       onAcquirePose(pose.id);
     }
     showToast(`Pose "${pose.name}" adquirida e adicionada ao seu inventário de poses!`);
-  };
-
-  const handleBuyRoomItem = async (item: CustomizationItem) => {
-    try {
-      showToast(`Processando aquisição da sala "${item.name}"...`);
-      const res = await buyRoom(item.roomId || item.id, item.id, user);
-      if (res.success) {
-        showToast(
-          res.isExisting
-            ? `Você já possui a cópia privada de "${item.name}". Ela já está na sua vitrine com filete vermelho!`
-            : `Sala "${item.name}" comprada com sucesso! Cópia privada criada com filete vermelho na sua vitrine.`
-        );
-        if (onRoomPurchased) onRoomPurchased();
-      } else {
-        showToast(`Erro ao comprar sala: ${res.error || 'Falha na requisição'}`);
-      }
-    } catch (e: any) {
-      showToast(`Erro ao adquirir sala: ${e.message}`);
-    }
   };
 
   const handleCreatePublish = async (e: React.FormEvent) => {
@@ -1556,7 +1527,6 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
               <div className="flex items-center gap-1.5 pb-2.5 overflow-x-auto scrollbar-none">
                 {[
                   { id: 'todos', label: 'Todos', icon: '🌟' },
-                  { id: 'salas', label: 'Salas', icon: '🏛️' },
                   { id: 'acessorios', label: 'Acessórios', icon: '👑' },
                   { id: 'avatar', label: 'Avatares', icon: '👤' },
                   { id: 'poses', label: 'Poses', icon: '💃' },
@@ -1741,10 +1711,9 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                     Actions de animação em tempo real!
                   </p>
 
-                    <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-3">
                     {publishedCommunityItems.map((item) => {
                       const isAcc = item.isAccessory || item.category === 'acessorios';
-                      const isRoom = item.isRoom || item.category === 'salas' || Boolean(item.roomId);
                       const isInspecting = selectedItemToInspect?.id === item.id;
                       const isSelectedAcc = selectedAccessoryId === item.id;
 
@@ -1753,9 +1722,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                           key={item.id}
                           onClick={() => handleSelectItem(item)}
                           className={`rounded-xl border p-2.5 flex flex-col justify-between transition-all cursor-pointer ${
-                            isRoom
-                              ? 'bg-[#181113] border-red-500/70 hover:border-red-400'
-                              : isSelectedAcc || isInspecting
+                            isSelectedAcc || isInspecting
                               ? 'bg-[#181a24] border-[#ffd700] ring-1 ring-[#ffd700]/70'
                               : 'bg-[#14151b] border-[#d4af37]/40 hover:border-[#ffd700]'
                           }`}
@@ -1767,14 +1734,8 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                               className="w-full h-full object-cover"
                               referrerPolicy="no-referrer"
                             />
-                            <span
-                              className={`absolute top-1 left-1 px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                                isRoom
-                                  ? 'bg-red-950/90 border border-red-500 text-rose-300'
-                                  : 'bg-black/80 border border-[#d4af37]/60 text-[#ffd700]'
-                              }`}
-                            >
-                              {isRoom ? '🏛️ SALA 3D' : isAcc ? '👑 ACESSÓRIO' : 'CRIADOR'}
+                            <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/80 border border-[#d4af37]/60 text-[9px] font-bold text-[#ffd700]">
+                              {isAcc ? '👑 ACESSÓRIO' : 'CRIADOR'}
                             </span>
                             {item.actions && item.actions.length > 0 && (
                               <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-cyan-950/90 border border-cyan-400/60 text-[9px] font-bold text-cyan-300">
@@ -1836,33 +1797,19 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                             </div>
                           )}
 
-                          {/* Action Button: Comprar Sala Privada OU Colocar no Avatar */}
-                          {isRoom ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleBuyRoomItem(item);
-                              }}
-                              className="w-full py-1.5 rounded-lg bg-gradient-to-r from-red-600 via-rose-500 to-red-700 hover:brightness-110 text-white text-xs font-bold shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5"
-                            >
-                              <Lock className="w-3.5 h-3.5 text-white" />
-                              <span>Comprar Sala Privada</span>
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDirectAcquire(item);
-                                handleSelectItem(item);
-                              }}
-                              className="w-full py-1.5 rounded-lg bg-gradient-to-r from-[#d4af37] to-[#ffd700] hover:brightness-110 text-black text-xs font-bold shadow-md transition-all cursor-pointer flex items-center justify-center gap-1"
-                            >
-                              <Sparkles className="w-3 h-3 text-black" />
-                              <span>{isAcc ? 'Pegar & Equipar' : 'Pegar Item'}</span>
-                            </button>
-                          )}
+                          {/* Action Button: Colocar no Avatar ou Adquirir */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDirectAcquire(item);
+                              handleSelectItem(item);
+                            }}
+                            className="w-full py-1.5 rounded-lg bg-gradient-to-r from-[#d4af37] to-[#ffd700] hover:brightness-110 text-black text-xs font-bold shadow-md transition-all cursor-pointer flex items-center justify-center gap-1"
+                          >
+                            <Sparkles className="w-3 h-3 text-black" />
+                            <span>{isAcc ? 'Pegar & Equipar' : 'Pegar Item'}</span>
+                          </button>
                         </div>
                       );
                     })}

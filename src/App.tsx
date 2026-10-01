@@ -44,7 +44,7 @@ import {
   RoomAccessSlot,
 } from './types';
 import { supabase } from './lib/supabase';
-import { persistStoreItem, persistShowcaseRoom, fetchPublicStoreItems, recordUserInventoryItem } from './lib/database';
+import { persistStoreItem, persistShowcaseRoom, fetchPublicStoreItems, fetchPublicShowcaseRooms, recordUserInventoryItem } from './lib/database';
 import { getGlbFile, saveGlbFile, deleteGlbFile } from './lib/storageIndexedDB';
 import { safeLocalStorageSet, sanitizeItemsForStorage } from './lib/storageUtils';
 import { fetchRemoteInventory } from './lib/assetSyncClient';
@@ -142,6 +142,22 @@ export const App: React.FC = () => {
   });
 
   const [activeRoomId, setActiveRoomId] = useState<string>('room-a');
+  const [publicShowcaseRooms, setPublicShowcaseRooms] = useState<RoomData[]>([]);
+
+  const loadPublicShowcaseRooms = async () => {
+    try {
+      const fetched = await fetchPublicShowcaseRooms();
+      if (fetched && fetched.length > 0) {
+        setPublicShowcaseRooms(fetched);
+      }
+    } catch (err) {
+      console.warn('Error fetching public showcase rooms:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadPublicShowcaseRooms();
+  }, [currentScreen]);
 
   // Inventory State (GLB files uploaded) - vem EXCLUSIVAMENTE de GET /api/v1/inventory
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -1873,6 +1889,13 @@ export const App: React.FC = () => {
       }));
 
     const combined = [...INITIAL_LOBBY_ROOMS, ...publishedEditorRooms];
+
+    for (const pRoom of publicShowcaseRooms) {
+      if (!combined.some((c) => c.id === pRoom.id || c.name === pRoom.name)) {
+        combined.push(pRoom);
+      }
+    }
+
     for (const sRoom of localShowcaseRooms) {
       if (!combined.some((c) => c.id === sRoom.id || c.name === sRoom.name)) {
         combined.push(sRoom);
@@ -1880,7 +1903,7 @@ export const App: React.FC = () => {
     }
 
     return combined;
-  }, [rooms]);
+  }, [rooms, publicShowcaseRooms]);
 
   // Handle Playtest room without publishing or appearing in vitrine
   const handlePlaytestActiveRoom = () => {
@@ -1918,8 +1941,9 @@ export const App: React.FC = () => {
         r.id === activeRoomId ? { ...r, isPublished: true, publishedAt: 'Agora' } : r
       )
     );
+    loadPublicShowcaseRooms();
     const targetRoomId = `editor-${activeRoom.id}`;
-    const foundIndex = lobbyRooms.findIndex((r) => r.id === targetRoomId);
+    const foundIndex = lobbyRooms.findIndex((r) => r.id === targetRoomId || r.name === activeRoom.name);
     if (foundIndex >= 0) {
       setLobbyRoomIndex(foundIndex);
     } else {
