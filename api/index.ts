@@ -529,6 +529,15 @@ function buildRouter(): express.Router {
         return;
       }
 
+      const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!UUID_REGEX.test(assetId)) {
+        res.status(404).json({
+          error: 'ASSET_NOT_FOUND',
+          message: 'Asset ID deve ser um UUID válido de public.assets.',
+        });
+        return;
+      }
+
       const db = getDatabasePool();
       const result = await db.query(
         `SELECT id, owner_user_id, storage_key, mime_type, byte_size, 
@@ -547,6 +556,23 @@ function buildRouter(): express.Router {
       if (asset.status !== 'ready') {
         res.status(409).json({ error: 'ASSET_NOT_READY', message: 'Asset não está pronto para download.', current_status: asset.status });
         return;
+      }
+
+      // Validação de privacidade: se for de outra conta e privado, bloqueia
+      const isOwner = asset.owner_user_id === userId;
+      const isPublic = asset.visibility === 'public_marketplace';
+      if (!isOwner && !isPublic) {
+        const invCheck = await db.query(
+          `SELECT id FROM public.inventory_items WHERE user_id = $1 AND asset_id = $2`,
+          [userId, assetId]
+        );
+        if (invCheck.rows.length === 0) {
+          res.status(403).json({
+            error: 'FORBIDDEN',
+            message: 'Sem permissão para acessar este item privado de outra conta.',
+          });
+          return;
+        }
       }
 
       const filename = `model_${asset.id.slice(0, 8)}.glb`;

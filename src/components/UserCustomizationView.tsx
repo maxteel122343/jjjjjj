@@ -1436,14 +1436,39 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                       <span className="text-xs font-bold text-zinc-400">Arquivos e Modelos do Usuário</span>
                     </div>
                     {filteredUserInventory.map((item) => {
+                      const isInspectingThis = selectedItemToInspect?.id === item.id || selectedAccessoryId === item.id;
                       return (
                         <div
                           key={item.id}
-                          className="relative rounded-xl border p-2 flex flex-col justify-between transition-all bg-[#121317] border-[#22242d]"
+                          onClick={() => {
+                            handleSelectItem({
+                              id: item.id,
+                              assetId: item.assetId || item.id,
+                              code: `#${item.id.slice(0, 6)}`,
+                              name: item.displayName || item.name || 'Modelo 3D',
+                              category: item.type === 'Avatar' ? 'avatares' : item.type === 'Sala' ? 'salas' : 'itens',
+                              thumb: item.thumbUrl,
+                              fileBlobUrl: item.fileBlobUrl,
+                              isAvatar: item.type === 'Avatar',
+                              isAccessory: item.type === 'Acessorio',
+                              owned: true,
+                              equipped: false,
+                              price: 0,
+                              rarity: 'RARO',
+                            });
+                          }}
+                          className={`relative rounded-xl border p-2 flex flex-col justify-between transition-all cursor-pointer group ${
+                            isInspectingThis
+                              ? 'bg-[#15171e] border-[#ffd700] ring-1 ring-[#ffd700]/60 shadow-[0_0_12px_rgba(255,215,0,0.25)]'
+                              : 'bg-[#121317] border-[#22242d] hover:border-zinc-700'
+                          }`}
                         >
                           <div className="flex items-center justify-between text-[10px] mb-1">
                             <span className="font-mono font-medium text-[#14b8a6]">
                               {item.type.toUpperCase()}
+                            </span>
+                            <span className="text-[9px] text-[#ffd700] opacity-0 group-hover:opacity-100 transition-opacity font-bold">
+                              Inspecionar 3D
                             </span>
                           </div>
 
@@ -1452,7 +1477,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                               <img
                                 src={item.thumbUrl}
                                 alt={item.displayName || item.name || 'item'}
-                                className="w-full h-full object-cover filter contrast-110"
+                                className="w-full h-full object-cover filter contrast-110 group-hover:scale-105 transition-transform duration-300"
                                 referrerPolicy="no-referrer"
                               />
                             ) : (
@@ -1465,6 +1490,15 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                           <p className="text-[11px] font-medium text-zinc-200 truncate mt-1 text-center">
                             {item.displayName || item.name}
                           </p>
+
+                          <div className="mt-2 pt-1 border-t border-white/5 flex items-center justify-center">
+                            <button
+                              type="button"
+                              className="w-full py-1 rounded text-[10px] font-bold bg-[#ffd700] text-black hover:brightness-110 cursor-pointer"
+                            >
+                              Inspecionar no Pedestal
+                            </button>
+                          </div>
                         </div>
                       );
                     })}

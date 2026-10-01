@@ -127,8 +127,20 @@ export const UploadGLBModal: React.FC<UploadGLBModalProps> = ({
     }
 
 
+    // Busca a download_url oficial do asset recém-concluído no S3
+    let s3DownloadUrl: string | undefined = undefined;
+    try {
+      const resolveRes = await fetch(`/api/v1/assets/${s3AssetId}/resolve`, {
+        headers: { 'x-user-id': 'user-default' },
+      });
+      if (resolveRes.ok) {
+        const data = await resolveRes.json();
+        s3DownloadUrl = data.download_url;
+      }
+    } catch {}
+
     const newItem: InventoryItem = {
-      id: `inv-${Date.now()}`,
+      id: s3AssetId, // UUID REAL do public.assets! NUNCA inv-*!
       assetId: s3AssetId,
       fileName: finalFileName,
       displayName: finalDisplayName,
@@ -136,12 +148,9 @@ export const UploadGLBModal: React.FC<UploadGLBModalProps> = ({
       type: selectedType,
       createdAt: 'Agora',
       isScenario: selectedType === 'Sala',
-      fileBlobUrl: blobUrl,
+      fileBlobUrl: s3DownloadUrl, // URL assinada do S3! NUNCA blob: depois do complete!
       modelType: 'custom_glb',
     };
-
-    // Guarantee persistence of the actual binary GLB in IndexedDB
-    saveGlbFile(newItem.id, file);
 
     setUploadedItem(newItem);
     // Initialize publish fields

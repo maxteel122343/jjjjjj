@@ -143,18 +143,8 @@ export const App: React.FC = () => {
 
   const [activeRoomId, setActiveRoomId] = useState<string>('room-a');
 
-  // Inventory State (GLB files uploaded)
-  const [inventory, setInventory] = useState<InventoryItem[]>(() => {
-    const saved = localStorage.getItem('3d_social_creator_inventory');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return INITIAL_INVENTORY;
-      }
-    }
-    return INITIAL_INVENTORY;
-  });
+  // Inventory State (GLB files uploaded) - vem EXCLUSIVAMENTE de GET /api/v1/inventory
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
 
   // User Auth State
   const [user, setUser] = useState<CreatorUser | null>(() => {
@@ -403,8 +393,11 @@ export const App: React.FC = () => {
   }, [inventory]);
 
   useEffect(() => {
-    safeLocalStorageSet('3d_social_creator_inventory', JSON.stringify(sanitizeItemsForStorage(inventory)));
-  }, [inventory]);
+    // Purge any old local inventory keys so UI is strictly sourced from GET /inventory
+    try {
+      localStorage.removeItem('3d_social_creator_inventory');
+    } catch {}
+  }, []);
 
   useEffect(() => {
     safeLocalStorageSet('3d_social_creator_customization_items', JSON.stringify(sanitizeItemsForStorage(customizationItems)));
@@ -613,59 +606,54 @@ export const App: React.FC = () => {
     // 2. Sync account items from GET /inventory (works across different browsers / devices)
     const targetUserId = user?.id || 'user-default';
     fetchRemoteInventory(targetUserId).then((remoteItems) => {
-      if (remoteItems && remoteItems.length > 0) {
+      if (remoteItems) {
         console.log(`[InventorySync] ${remoteItems.length} itens recuperados do GET /inventory`);
-        setInventory((prev) => {
-          const merged = [...prev];
+        const mappedItems: InventoryItem[] = remoteItems.map((rem) => {
+          const mappedType = rem.category === 'room_mesh' ? 'Sala' : rem.category === 'avatar' ? 'Avatar' : 'Item';
+          return {
+            id: rem.asset_id, // UUID real de public.assets
+            assetId: rem.asset_id, // UUID real
+            fileName: rem.filename,
+            displayName: rem.custom_label || rem.filename,
+            thumbUrl: 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=400&q=80',
+            type: mappedType,
+            createdAt: new Date(rem.acquired_at).toLocaleDateString(),
+            isScenario: mappedType === 'Sala',
+            modelType: 'custom_glb',
+            fileBlobUrl: rem.download_url, // URL assinada do S3, NUNCA blob:!
+          };
+        });
+        setInventory(mappedItems);
+
+        // Atualiza customizationItems garantindo IDs UUID e URLs remotas assinadas do S3
+        setCustomizationItems((prev) => {
+          const cleanPrev = prev.filter((i) => !i.id.startsWith('inv-') && !i.fileBlobUrl?.startsWith('blob:'));
           for (const rem of remoteItems) {
-            const mappedType = rem.category === 'room_mesh' ? 'Sala' : rem.category === 'avatar' ? 'Avatar' : 'Acessorio';
-            const invItem: InventoryItem = {
+            const idx = cleanPrev.findIndex((m) => m.id === rem.asset_id || m.assetId === rem.asset_id);
+            const isAcc = rem.category === 'accessory' || rem.category === 'item' || !rem.category;
+            const customItem: CustomizationItem = {
               id: rem.asset_id,
               assetId: rem.asset_id,
-              fileName: rem.filename,
-              displayName: rem.custom_label || rem.filename,
-              thumbUrl: 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=400&q=80',
-              type: mappedType,
-              createdAt: new Date(rem.acquired_at).toLocaleDateString(),
-              modelType: 'custom_glb',
+              code: `#AC${rem.asset_id.slice(0, 4)}`,
+              name: rem.custom_label || 'Modelo 3D',
+              category: isAcc ? 'acessorios' : 'itens',
+              slot: 'companion_float',
+              thumb: 'https://images.unsplash.com/photo-1511499767150-a48a237f0083?auto=format&fit=crop&w=400&q=80',
               fileBlobUrl: rem.download_url,
+              owned: true,
+              equipped: false,
+              price: 0,
+              rarity: 'RARO',
+              isAccessory: isAcc,
+              accessoryAttachment: 'companion_float',
             };
-            const idx = merged.findIndex((m) => m.id === rem.asset_id || m.assetId === rem.asset_id);
             if (idx >= 0) {
-              merged[idx] = { ...merged[idx], ...invItem };
+              cleanPrev[idx] = { ...cleanPrev[idx], ...customItem };
             } else {
-              merged.unshift(invItem);
+              cleanPrev.unshift(customItem);
             }
           }
-          return merged;
-        });
-
-        // Also ensure accessories are available in customizationItems with lightweight metadata only
-        setCustomizationItems((prev) => {
-          const merged = [...prev];
-          for (const rem of remoteItems) {
-            if (rem.category === 'accessory' || rem.category === 'item' || !rem.category) {
-              const idx = merged.findIndex((m) => m.id === rem.asset_id || m.assetId === rem.asset_id);
-              if (idx < 0) {
-                merged.unshift({
-                  id: rem.asset_id,
-                  code: `#AC${rem.asset_id.slice(0, 4)}`,
-                  name: rem.custom_label || 'Acessório 3D',
-                  category: 'acessorios',
-                  slot: 'companion_float',
-                  thumb: 'https://images.unsplash.com/photo-1511499767150-a48a237f0083?auto=format&fit=crop&w=400&q=80',
-                  owned: true,
-                  equipped: false,
-                  price: 0,
-                  rarity: 'RARO',
-                  isAccessory: true,
-                  accessoryAttachment: 'companion_float',
-                  assetId: rem.asset_id,
-                });
-              }
-            }
-          }
-          return merged;
+          return cleanPrev;
         });
       }
     }).catch((err) => {
@@ -1256,7 +1244,28 @@ export const App: React.FC = () => {
     item: InventoryItem,
     autoInsertPoint?: [number, number, number] | null
   ) => {
-    setInventory((prev) => [item, ...prev]);
+    setInventory((prev) => [item, ...prev.filter((i) => i.id !== item.id)]);
+
+    const isAcc = item.isAccessory || item.type === 'Acessorio' || item.type === 'Item';
+    setCustomizationItems((prev) => [
+      {
+        id: item.id,
+        assetId: item.id,
+        code: `#AC${item.id.slice(0, 4)}`,
+        name: item.displayName,
+        category: isAcc ? 'acessorios' : 'itens',
+        slot: 'companion_float',
+        thumb: item.thumbUrl,
+        fileBlobUrl: item.fileBlobUrl,
+        owned: true,
+        equipped: false,
+        price: 0,
+        rarity: 'RARO',
+        isAccessory: isAcc,
+        accessoryAttachment: 'companion_float',
+      },
+      ...prev.filter((i) => i.id !== item.id && !i.id.startsWith('inv-') && !i.fileBlobUrl?.startsWith('blob:')),
+    ]);
 
     // 1. If user uploads a 'Sala' (architectural 3D scenario)
     if (item.type === 'Sala') {

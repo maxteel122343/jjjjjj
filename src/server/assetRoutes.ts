@@ -390,6 +390,15 @@ export function createAssetRouter(): Router {
         return;
       }
 
+      const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!UUID_REGEX.test(assetId)) {
+        res.status(404).json({
+          error: 'ASSET_NOT_FOUND',
+          message: 'Asset ID deve ser um UUID válido de public.assets.',
+        });
+        return;
+      }
+
       const db = getDatabasePool();
       const result = await db.query(
         `SELECT id, owner_user_id, storage_key, mime_type, byte_size, 

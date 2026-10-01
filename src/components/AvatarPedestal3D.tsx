@@ -67,44 +67,50 @@ async function loadGlbWithIndexedDBFallback(
     });
   };
 
-  // 1. PRIORIDADE MÁXIMA: Carrega pela download_url de GET /assets/{id}/resolve do Supabase Storage S3
-  const candidateAssetIds = [assetId, originalItemId, itemId].filter(
-    (id): id is string => Boolean(id && typeof id === 'string' && !id.startsWith('blob:') && !id.startsWith('data:'))
-  );
-
-  for (const candidate of candidateAssetIds) {
-    // Se o ID contiver sufixos de publicação ou prefixos, extrai o ID real do asset
-    const cleanId = candidate.includes('-pub-') ? candidate.split('-pub-')[1]?.replace(/-\d+$/, '') : candidate;
-    const idsToTry = [cleanId, candidate].filter(Boolean);
-
-    for (const testId of idsToTry) {
-      try {
-        const resolveRes = await fetch(`/api/v1/assets/${testId}/resolve`, {
-          headers: { 'x-user-id': 'user-default' },
-        }).catch(() => null);
-
-        if (resolveRes && resolveRes.ok) {
-          const data = await resolveRes.json();
-          if (data.download_url) {
-            console.log(`[Pedestal3D] Carregando modelo via download_url assinada do Storage S3 para asset ${testId}`);
-            const ok = await tryLoad(data.download_url);
-            if (ok) return;
-          }
-        }
-      } catch (e) {
-        // Continua
+  // 1. PRIORIDADE MÁXIMA: Se houver um UUID real (public.assets.id), chama GET /api/v1/assets/{uuid}/resolve
+  const rawCandidates = [assetId, itemId, originalItemId];
+  let validUuid: string | null = null;
+  for (const c of rawCandidates) {
+    if (typeof c === 'string') {
+      const match = c.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      if (match) {
+        validUuid = match[0];
+        break;
       }
     }
   }
 
-  // 2. Se a URL fornecida for uma URL remota válida (https://...), carrega diretamente
-  if (url && !url.startsWith('blob:') && !url.startsWith('data:')) {
+  if (validUuid) {
+    try {
+      const resolveRes = await fetch(`/api/v1/assets/${validUuid}/resolve`, {
+        headers: { 'x-user-id': 'user-default' },
+      }).catch(() => null);
+
+      if (resolveRes && resolveRes.ok) {
+        const data = await resolveRes.json();
+        if (data.download_url) {
+          console.log(`[Pedestal3D] Carregando model.glb via download_url assinada do Storage S3 para UUID ${validUuid}`);
+          const ok = await tryLoad(data.download_url);
+          if (ok) return;
+        }
+      } else if (resolveRes && resolveRes.status === 403) {
+        console.warn(`[Pedestal3D] Asset ${validUuid} é privado de outra conta.`);
+        onError();
+        return;
+      }
+    } catch (e) {
+      console.warn('[Pedestal3D] Erro ao resolver asset:', e);
+    }
+  }
+
+  // 2. Se a URL fornecida for uma URL remota válida https://, carrega diretamente (NUNCA blob:)
+  if (url && typeof url === 'string' && url.startsWith('http')) {
     const ok = await tryLoad(url);
     if (ok) return;
   }
 
-  // 3. Fallback para IndexedDB local (se houver cópia em cache local)
-  if (itemId) {
+  // 3. Fallback para IndexedDB local (se houver cópia em cache local e o ID não for inválido)
+  if (itemId && !itemId.startsWith('blob:')) {
     try {
       const blob = await getGlbFile(itemId);
       if (blob) {
@@ -115,29 +121,13 @@ async function loadGlbWithIndexedDBFallback(
     } catch (e) {}
   }
 
-  if (originalItemId) {
+  if (originalItemId && !originalItemId.startsWith('blob:')) {
     try {
       const blob = await getGlbFile(originalItemId);
       if (blob) {
         const freshUrl = URL.createObjectURL(blob);
         const ok = await tryLoad(freshUrl);
         if (ok) return;
-      }
-    } catch (e) {}
-  }
-
-  // 4. Try extracting key from pub- prefixes in IndexedDB
-  if (itemId && itemId.includes('-pub-')) {
-    try {
-      const parts = itemId.split('-pub-');
-      if (parts[1]) {
-        const candidateId = parts[1].replace(/-\d+$/, '');
-        const blob = await getGlbFile(candidateId);
-        if (blob) {
-          const freshUrl = URL.createObjectURL(blob);
-          const ok = await tryLoad(freshUrl);
-          if (ok) return;
-        }
       }
     } catch (e) {}
   }
