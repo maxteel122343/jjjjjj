@@ -52,5 +52,9 @@ export function getDatabasePool(): Pool {
   return pool;
 }
 
-export const db = getDatabasePool();
+export const db = new Proxy({} as Pool, {
+  get(_target, prop) {
+    return (getDatabasePool() as any)[prop];
+  },
+});
 

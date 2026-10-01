@@ -6,10 +6,11 @@ import {
   getMissingStorageEnv,
   isStorageConfigured,
   getMissingRequiredEnv,
+  checkServerConfig,
   sanitizeErrorMessage,
 } from './storage';
 
-export { sanitizeErrorMessage };
+export { sanitizeErrorMessage, checkServerConfig };
 
 /**
  * Garante que qualquer identificador de usuário (mesmo strings como 'user-default' ou IDs de sessão)
@@ -80,13 +81,9 @@ export function createAssetRouter(): Router {
   // --------------------------------------------------------------------------
   router.post(['/assets/upload/init', '/assets/uploads'], async (req: Request, res: Response): Promise<void> => {
     try {
-      // Validação estrita das 6 variáveis de ambiente no servidor
-      const missingEnv = getMissingRequiredEnv();
-      if (missingEnv.length > 0) {
-        res.status(500).json({
-          error: 'ENV_CONFIG_MISSING',
-          message: `Variável ausente no servidor: ${missingEnv.join(', ')}`,
-        });
+      const configError = checkServerConfig();
+      if (configError) {
+        res.status(500).json(configError);
         return;
       }
 
@@ -241,12 +238,9 @@ export function createAssetRouter(): Router {
   // --------------------------------------------------------------------------
   router.post(['/assets/:assetId/complete', '/assets/:id/complete'], async (req: Request, res: Response): Promise<void> => {
     try {
-      const missingEnv = getMissingRequiredEnv();
-      if (missingEnv.length > 0) {
-        res.status(500).json({
-          error: 'ENV_CONFIG_MISSING',
-          message: `Variável ausente no servidor: ${missingEnv.join(', ')}`,
-        });
+      const configError = checkServerConfig();
+      if (configError) {
+        res.status(500).json(configError);
         return;
       }
 
@@ -381,12 +375,9 @@ export function createAssetRouter(): Router {
   // --------------------------------------------------------------------------
   router.get(['/assets/:assetId/resolve', '/assets/:assetId', '/assets/:id/resolve', '/assets/:id'], async (req: Request, res: Response): Promise<void> => {
     try {
-      const missingEnv = getMissingRequiredEnv();
-      if (missingEnv.length > 0) {
-        res.status(500).json({
-          error: 'ENV_CONFIG_MISSING',
-          message: `Variável ausente no servidor: ${missingEnv.join(', ')}`,
-        });
+      const configError = checkServerConfig();
+      if (configError) {
+        res.status(500).json(configError);
         return;
       }
 
@@ -476,12 +467,9 @@ export function createAssetRouter(): Router {
   // --------------------------------------------------------------------------
   router.get('/inventory', async (req: Request, res: Response): Promise<void> => {
     try {
-      const missingEnv = getMissingRequiredEnv();
-      if (missingEnv.length > 0) {
-        res.status(500).json({
-          error: 'ENV_CONFIG_MISSING',
-          message: `Variável ausente no servidor: ${missingEnv.join(', ')}`,
-        });
+      const configError = checkServerConfig();
+      if (configError) {
+        res.status(500).json(configError);
         return;
       }
 
