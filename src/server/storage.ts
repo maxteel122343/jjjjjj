@@ -124,7 +124,8 @@ export const storageService = {
     const bucket = this.getBucket();
 
     const sanitized = params.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const safeFilename = sanitized.toLowerCase().endsWith('.glb') ? sanitized : `${sanitized}.glb`;
+    const baseName = sanitized.replace(/(\.glb)+$/i, '');
+    const safeFilename = `${baseName}.glb`;
 
     const command = new GetObjectCommand({
       Bucket: bucket,

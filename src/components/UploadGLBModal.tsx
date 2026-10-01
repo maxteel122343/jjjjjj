@@ -85,8 +85,16 @@ export const UploadGLBModal: React.FC<UploadGLBModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setUploadError(null);
-    const finalDisplayName = displayName.trim() || (file ? file.name.replace(/\.[^/.]+$/, '').trim() : 'Objeto 3D');
-    const finalFileName = file ? file.name : `${finalDisplayName.toLowerCase().replace(/\s+/g, '_')}.glb`;
+
+    if (!file) {
+      setUploadError('Selecione um arquivo .glb para realizar o upload.');
+      return;
+    }
+
+    // 3. Garante terminação única em .glb sem duplicar (.glb.glb)
+    const cleanBaseName = file.name.replace(/(\.glb)+$/i, '').trim() || 'modelo';
+    const finalFileName = `${cleanBaseName}.glb`;
+    const finalDisplayName = displayName.trim() || cleanBaseName;
 
     let finalThumb = thumbUrl.trim();
     if (!finalThumb) {
@@ -99,29 +107,40 @@ export const UploadGLBModal: React.FC<UploadGLBModalProps> = ({
       }
     }
 
-    const blobUrl = file ? URL.createObjectURL(file) : undefined;
+    const blobUrl = URL.createObjectURL(file);
     let s3AssetId: string | undefined = undefined;
 
-    // Se o Object Storage S3/R2 estiver configurado, faz o PUT direto via URL assinada
-    if (file && storageHealth?.storage_configured) {
-      setIsUploadingToStorage(true);
-      setUploadProgress(0);
-      try {
-        const cat = selectedType === 'Sala' ? 'room_mesh' : selectedType === 'Avatar' ? 'avatar' : 'accessory';
-        const res = await uploadGlbDirect(
-          file,
-          cat,
-          'user-default',
-          undefined,
-          (pct) => setUploadProgress(pct)
-        );
-        s3AssetId = res.asset_id;
-      } catch (err: any) {
-        console.warn('Direct S3 upload warning:', err);
-        setUploadError(`Upload direto S3/R2: ${err.message || 'Falha no envio'}`);
-      } finally {
-        setIsUploadingToStorage(false);
-      }
+    // 1. O upload usa só POST /assets/upload/init, PUT na upload_url assinada e POST /complete.
+    // Se o storage não estiver ativo, interrompe imediatamente e avisa o usuário.
+    if (!storageHealth?.storage_configured) {
+      setUploadError(
+        `Supabase Storage (Protocolo S3) não configurado no servidor. Defina as variáveis no .env: ${(storageHealth?.missing_storage_env || []).join(', ')}`
+      );
+      return;
+    }
+
+    setIsUploadingToStorage(true);
+    setUploadProgress(0);
+
+    try {
+      const cat = selectedType === 'Sala' ? 'room_mesh' : selectedType === 'Avatar' ? 'avatar' : 'accessory';
+      const res = await uploadGlbDirect(
+        file,
+        cat,
+        'user-default',
+        undefined,
+        (pct) => setUploadProgress(pct)
+      );
+      s3AssetId = res.asset_id;
+    } catch (err: any) {
+      // 4. Se o PUT não for 2xx (ou init/complete falharem), mostre na tela o status e o body. Não marque sucesso.
+      const errorDetail = err?.message || 'Falha desconhecida no envio do arquivo 3D';
+      console.error('Falha no upload para o storage:', errorDetail);
+      setUploadError(errorDetail);
+      setIsUploadingToStorage(false);
+      return; // Interrompe imediatamente. Não marca sucesso.
+    } finally {
+      setIsUploadingToStorage(false);
     }
 
     const newItem: InventoryItem = {
@@ -138,9 +157,7 @@ export const UploadGLBModal: React.FC<UploadGLBModalProps> = ({
     };
 
     // Guarantee persistence of the actual binary GLB in IndexedDB
-    if (file) {
-      saveGlbFile(newItem.id, file);
-    }
+    saveGlbFile(newItem.id, file);
 
     setUploadedItem(newItem);
     // Initialize publish fields
@@ -591,9 +608,17 @@ export const UploadGLBModal: React.FC<UploadGLBModalProps> = ({
             )}
 
             {uploadError && (
-              <div className="p-3 rounded-xl bg-red-950/50 border border-red-500/50 text-red-200 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-400" />
-                <span>{uploadError}</span>
+              <div className="p-4 rounded-xl bg-red-950/80 border border-red-500 text-red-200 text-xs flex flex-col gap-2 shadow-lg animate-fade-in">
+                <div className="flex items-center gap-2 font-bold text-red-400 text-sm">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0 text-red-400" />
+                  <span>Erro no Upload do Arquivo 3D</span>
+                </div>
+                <div className="font-mono bg-black/70 p-3 rounded-lg border border-red-900/60 break-all text-[11px] whitespace-pre-wrap max-h-48 overflow-y-auto text-red-300">
+                  {uploadError}
+                </div>
+                <p className="text-[10px] text-red-400/80">
+                  O arquivo não foi marcado como concluído pois o envio ao Storage não retornou status de sucesso (2xx).
+                </p>
               </div>
             )}
 

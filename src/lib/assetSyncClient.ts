@@ -73,12 +73,15 @@ export async function uploadGlbDirect(
     authHeaders['Authorization'] = `Bearer ${authToken}`;
   }
 
+  // Garante que o nome do arquivo termine estritamente em .glb sem duplicar (.glb.glb)
+  const cleanFilename = file.name.replace(/(\.glb)+$/i, '') + '.glb';
+
   // Etapa 1: POST /api/v1/assets/upload/init
   const initRes = await fetch('/api/v1/assets/upload/init', {
     method: 'POST',
     headers: authHeaders,
     body: JSON.stringify({
-      filename: file.name,
+      filename: cleanFilename,
       byte_size: file.size,
       sha256: sha256Hex,
       category,
@@ -89,12 +92,12 @@ export async function uploadGlbDirect(
 
   if (!initRes.ok) {
     const errBody = await initRes.json().catch(() => ({}));
-    throw new Error(errBody.message || `INIT_FAILED_HTTP_${initRes.status}`);
+    throw new Error(errBody.message || errBody.error || `INIT_FAILED_HTTP_${initRes.status}`);
   }
 
   const { asset_id, upload_id, upload_url, required_headers } = await initRes.json();
 
-  // Etapa 2: PUT direto no Object Storage S3/R2
+  // Etapa 2: PUT direto no Supabase Storage via URL assinada
   await new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', upload_url, true);
@@ -115,11 +118,14 @@ export async function uploadGlbDirect(
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
       } else {
-        reject(new Error(`STORAGE_PUT_FAILED: HTTP ${xhr.status} - ${xhr.responseText}`));
+        const bodyContent = xhr.responseText ? xhr.responseText.slice(0, 1000) : '(corpo vazio)';
+        reject(new Error(`STORAGE_PUT_FAILED: HTTP ${xhr.status} - ${bodyContent}`));
       }
     };
 
-    xhr.onerror = () => reject(new Error('NETWORK_ERROR_DURING_STORAGE_PUT'));
+    xhr.onerror = () => {
+      reject(new Error('NETWORK_ERROR_DURING_STORAGE_PUT: Falha de conexão ou CORS ao enviar para upload_url'));
+    };
 
     if (abortSignal) {
       abortSignal.addEventListener('abort', () => {
