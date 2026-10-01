@@ -71,9 +71,9 @@ export function createAssetRouter(): Router {
   router.post(['/assets/upload/init', '/assets/uploads'], async (req: Request, res: Response): Promise<void> => {
     const missingStorage = getMissingStorageEnv();
     if (missingStorage.length > 0) {
-      res.status(503).json({
-        error: 'STORAGE_NOT_CONFIGURED',
-        message: `Supabase Storage (Protocolo S3) não configurado. Defina as variáveis: ${missingStorage.join(', ')}. Exemplo: S3_ENDPOINT=https://<project-ref>.supabase.co/storage/v1/s3`,
+      res.status(500).json({
+        error: 'STORAGE_CONFIG_MISSING',
+        message: `Supabase Storage (Protocolo S3) não configurado no servidor. Variável ausente: ${missingStorage.join(', ')}.`,
         missing_env: missingStorage,
       });
       return;

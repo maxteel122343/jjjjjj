@@ -16,11 +16,11 @@ export function getSecretAccessKey(): string | undefined {
 
 export function getMissingStorageEnv(): string[] {
   const missing: string[] = [];
-  if (!process.env.S3_ENDPOINT) missing.push('S3_ENDPOINT');
-  if (!process.env.S3_BUCKET) missing.push('S3_BUCKET');
-  if (!getAccessKeyId()) missing.push('S3_ACCESS_KEY_ID (ou S3_ACCESS_KEY)');
-  if (!getSecretAccessKey()) missing.push('S3_SECRET_ACCESS_KEY (ou S3_SECRET_ACC)');
-  if (!process.env.S3_REGION) missing.push('S3_REGION');
+  if (!process.env.S3_ENDPOINT || !process.env.S3_ENDPOINT.trim()) missing.push('S3_ENDPOINT');
+  if (!process.env.S3_BUCKET || !process.env.S3_BUCKET.trim()) missing.push('S3_BUCKET');
+  if (!getAccessKeyId()) missing.push('S3_ACCESS_KEY_ID');
+  if (!getSecretAccessKey()) missing.push('S3_SECRET_ACCESS_KEY');
+  if (!process.env.S3_REGION || !process.env.S3_REGION.trim()) missing.push('S3_REGION');
   return missing;
 }
 
@@ -34,13 +34,14 @@ function getS3Client(): S3Client {
   const missing = getMissingStorageEnv();
   if (missing.length > 0) {
     throw new Error(
-      `STORAGE_CONFIG_MISSING: Variáveis do Supabase Storage (S3 Protocol) ausentes: ${missing.join(', ')}. Configure S3_ENDPOINT=https://<project-ref>.supabase.co/storage/v1/s3`
+      `STORAGE_CONFIG_MISSING: Variáveis do Supabase Storage (S3 Protocol) ausentes no servidor: ${missing.join(', ')}.`
     );
   }
 
-  const endpoint = process.env.S3_ENDPOINT!.trim();
-  if (!endpoint.includes('/storage/v1/s3')) {
-    console.warn(`[Supabase Storage S3] Aviso: S3_ENDPOINT "${endpoint}" não contém o caminho padrão '/storage/v1/s3'.`);
+  let endpoint = process.env.S3_ENDPOINT!.trim();
+  // Se for endpoint do Supabase e não tiver o sufixo /storage/v1/s3, anexa automaticamente
+  if (endpoint.includes('supabase.co') && !endpoint.includes('/storage/v1/s3')) {
+    endpoint = endpoint.replace(/\/+$/, '') + '/storage/v1/s3';
   }
 
   const accessKey = getAccessKeyId()!;
@@ -49,11 +50,11 @@ function getS3Client(): S3Client {
   if (!s3ClientInstance) {
     s3ClientInstance = new S3Client({
       endpoint,
-      region: process.env.S3_REGION || 'us-east-1',
+      region: process.env.S3_REGION?.trim() || 'us-east-1',
       forcePathStyle: true, // OBRIGATÓRIO: Supabase Storage requer forcePathStyle=true para resolução de buckets
       credentials: {
-        accessKeyId: accessKey,
-        secretAccessKey: secretKey,
+        accessKeyId: accessKey.trim(),
+        secretAccessKey: secretKey.trim(),
       },
     });
   }

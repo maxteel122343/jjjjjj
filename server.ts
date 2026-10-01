@@ -34,9 +34,11 @@ async function startServer() {
   });
 
   // Rotas de API de Assets
-  app.use('/api/v1', createAssetRouter());
-  // Alias sem prefixo v1 para compatibilidade estrita com a spec
-  app.use('/', createAssetRouter());
+  const assetRouter = createAssetRouter();
+  app.use('/api/v1', assetRouter);
+  app.use('/v1', assetRouter);
+  app.use('/api', assetRouter);
+  app.use('/', assetRouter);
 
   if (!isProduction) {
     // Modo Desenvolvimento: Monta o Vite via middleware

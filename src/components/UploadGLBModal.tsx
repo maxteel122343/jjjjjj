@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { X, Box, Check, Upload, Sparkles, ArrowLeft, Tag, Pencil, Cloud, AlertCircle, RefreshCw } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Box, Check, Upload, Sparkles, ArrowLeft, Tag, Pencil, AlertCircle, RefreshCw } from 'lucide-react';
 import { InventoryItem, StoreObjectType } from '../types';
 import { persistStoreItem } from '../lib/database';
 import { saveGlbFile } from '../lib/storageIndexedDB';
-import { checkStorageHealth, uploadGlbDirect, StorageConfigHealth } from '../lib/assetSyncClient';
+import { uploadGlbDirect } from '../lib/assetSyncClient';
 import { CoverImagePicker } from './CoverImagePicker';
 
 interface UploadGLBModalProps {
@@ -32,17 +32,10 @@ export const UploadGLBModal: React.FC<UploadGLBModalProps> = ({
   const [selectedType, setSelectedType] = useState<'Sala' | 'Avatar' | 'Item'>('Item');
   const [uploadedItem, setUploadedItem] = useState<InventoryItem | null>(null);
 
-  // Storage Health & Direct Upload State
-  const [storageHealth, setStorageHealth] = useState<StorageConfigHealth | null>(null);
+  // Direct Upload State
   const [isUploadingToStorage, setIsUploadingToStorage] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (isOpen) {
-      checkStorageHealth().then(setStorageHealth).catch(() => {});
-    }
-  }, [isOpen]);
 
   // Dual-mode publish state
   const [isConfiguringPublish, setIsConfiguringPublish] = useState(false);
@@ -110,15 +103,6 @@ export const UploadGLBModal: React.FC<UploadGLBModalProps> = ({
     const blobUrl = URL.createObjectURL(file);
     let s3AssetId: string | undefined = undefined;
 
-    // 1. O upload usa só POST /assets/upload/init, PUT na upload_url assinada e POST /complete.
-    // Se o storage não estiver ativo, interrompe imediatamente e avisa o usuário.
-    if (!storageHealth?.storage_configured) {
-      setUploadError(
-        `Supabase Storage (Protocolo S3) não configurado no servidor. Defina as variáveis no .env: ${(storageHealth?.missing_storage_env || []).join(', ')}`
-      );
-      return;
-    }
-
     setIsUploadingToStorage(true);
     setUploadProgress(0);
 
@@ -133,15 +117,15 @@ export const UploadGLBModal: React.FC<UploadGLBModalProps> = ({
       );
       s3AssetId = res.asset_id;
     } catch (err: any) {
-      // 4. Se o PUT não for 2xx (ou init/complete falharem), mostre na tela o status e o body. Não marque sucesso.
-      const errorDetail = err?.message || 'Falha desconhecida no envio do arquivo 3D';
+      const errorDetail = err?.message || 'Falha no envio do arquivo 3D';
       console.error('Falha no upload para o storage:', errorDetail);
       setUploadError(errorDetail);
       setIsUploadingToStorage(false);
-      return; // Interrompe imediatamente. Não marca sucesso.
+      return; // Interrompe imediatamente. Não marca o upload como concluído sem PUT 2xx.
     } finally {
       setIsUploadingToStorage(false);
     }
+
 
     const newItem: InventoryItem = {
       id: `inv-${Date.now()}`,
@@ -577,35 +561,6 @@ export const UploadGLBModal: React.FC<UploadGLBModalProps> = ({
           )
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Object Storage Status Banner */}
-            {storageHealth && (
-              <div
-                className={`p-3 rounded-xl border flex items-center justify-between text-xs ${
-                  storageHealth.storage_configured
-                    ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
-                    : 'bg-amber-950/40 border-amber-500/40 text-amber-200'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Cloud className="w-4 h-4 flex-shrink-0" />
-                  <div>
-                    <span className="font-bold">
-                      {storageHealth.storage_configured
-                        ? `Object Storage S3/R2 Ativo (Bucket: ${storageHealth.bucket})`
-                        : 'Object Storage S3/R2 aguardando variáveis no .env'}
-                    </span>
-                    {!storageHealth.storage_configured && (
-                      <p className="text-[10px] text-amber-300/80 mt-0.5">
-                        Defina: {storageHealth.missing_storage_env.join(', ')} para upload direto.
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-black/40 border border-current">
-                  {storageHealth.storage_configured ? 'S3 Direct' : 'Local / IDB'}
-                </span>
-              </div>
-            )}
 
             {uploadError && (
               <div className="p-4 rounded-xl bg-red-950/80 border border-red-500 text-red-200 text-xs flex flex-col gap-2 shadow-lg animate-fade-in">

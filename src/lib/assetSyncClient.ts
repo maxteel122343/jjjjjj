@@ -91,8 +91,17 @@ export async function uploadGlbDirect(
   });
 
   if (!initRes.ok) {
-    const errBody = await initRes.json().catch(() => ({}));
-    throw new Error(errBody.message || errBody.error || `INIT_FAILED_HTTP_${initRes.status}`);
+    let errMsg = `INIT_FAILED_HTTP_${initRes.status}`;
+    try {
+      const errBody = await initRes.json();
+      errMsg = errBody.message || errBody.error || errMsg;
+    } catch {
+      const rawText = await initRes.text().catch(() => '');
+      if (rawText) {
+        errMsg = `Servidor (${initRes.status}): ${rawText.slice(0, 300)}`;
+      }
+    }
+    throw new Error(errMsg);
   }
 
   const { asset_id, upload_id, upload_url, required_headers } = await initRes.json();
@@ -146,8 +155,17 @@ export async function uploadGlbDirect(
   });
 
   if (!completeRes.ok) {
-    const errBody = await completeRes.json().catch(() => ({}));
-    throw new Error(errBody.message || `COMPLETE_FAILED_HTTP_${completeRes.status}`);
+    let errMsg = `COMPLETE_FAILED_HTTP_${completeRes.status}`;
+    try {
+      const errBody = await completeRes.json();
+      errMsg = errBody.message || errBody.error || errMsg;
+    } catch {
+      const rawText = await completeRes.text().catch(() => '');
+      if (rawText) {
+        errMsg = `Servidor (${completeRes.status}): ${rawText.slice(0, 300)}`;
+      }
+    }
+    throw new Error(errMsg);
   }
 
   return { asset_id, upload_id };
