@@ -36,14 +36,15 @@ export function getDatabasePool(): Pool {
     }
 
     try {
+      const isSsl = connectionString.includes('sslmode=require') || connectionString.includes('supabase.co');
       pool = new Pool({
         connectionString,
-        ssl: connectionString.includes('sslmode=require') || connectionString.includes('supabase.co')
-          ? { rejectUnauthorized: false }
-          : false,
+        ssl: isSsl ? { rejectUnauthorized: false } : undefined,
+        connectionTimeoutMillis: 5000,
+        max: 5,
       });
     } catch {
-      console.warn('[AI Studio] Falha ao conectar no PostgreSQL — mock ativo');
+      console.warn('[AI Studio] Falha ao inicializar pool do PostgreSQL — mock ativo');
       pool = createMockPool();
     }
   }

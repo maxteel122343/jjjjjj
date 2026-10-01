@@ -250,7 +250,17 @@ export async function fetchRemoteInventory(
   });
 
   if (!res.ok) {
-    throw new Error(`INVENTORY_FETCH_FAILED_HTTP_${res.status}`);
+    let errMsg = `INVENTORY_FETCH_FAILED_HTTP_${res.status}`;
+    try {
+      const errBody = await res.json();
+      errMsg = errBody.message || errBody.error || errMsg;
+    } catch {
+      const rawText = await res.text().catch(() => '');
+      if (rawText) {
+        errMsg = `Servidor (${res.status}): ${rawText.slice(0, 300)}`;
+      }
+    }
+    throw new Error(errMsg);
   }
 
   const data = await res.json();

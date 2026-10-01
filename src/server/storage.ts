@@ -14,6 +14,40 @@ export function getSecretAccessKey(): string | undefined {
   return process.env.S3_SECRET_ACCESS_KEY || process.env.S3_SECRET_ACC;
 }
 
+export function sanitizeErrorMessage(err: unknown): string {
+  if (!err) return 'Erro interno do servidor';
+  let msg = typeof err === 'string' ? err : (err as any).message || String(err);
+
+  // Remove senhas de connection strings (ex: postgresql://user:PASSWORD@host...)
+  msg = msg.replace(/(postgres(?:ql)?:\/\/[^:]+:)([^@]+)(@)/gi, '$1***$3');
+
+  // Remove secrets de chaves S3
+  const secretKey = process.env.S3_SECRET_ACCESS_KEY || process.env.S3_SECRET_ACC;
+  if (secretKey && secretKey.length > 3) {
+    msg = msg.split(secretKey).join('***');
+  }
+  const accessKey = process.env.S3_ACCESS_KEY_ID || process.env.S3_ACCESS_KEY;
+  if (accessKey && accessKey.length > 3) {
+    msg = msg.split(accessKey).join('***');
+  }
+
+  // Remove assinaturas AWS
+  msg = msg.replace(/(X-Amz-Signature=|Signature=)[a-zA-Z0-9_-]+/gi, '$1***');
+
+  return msg;
+}
+
+export function getMissingRequiredEnv(): string[] {
+  const missing: string[] = [];
+  if (!process.env.S3_ENDPOINT || !process.env.S3_ENDPOINT.trim()) missing.push('S3_ENDPOINT');
+  if (!process.env.S3_BUCKET || !process.env.S3_BUCKET.trim()) missing.push('S3_BUCKET');
+  if (!getAccessKeyId()) missing.push('S3_ACCESS_KEY_ID');
+  if (!getSecretAccessKey()) missing.push('S3_SECRET_ACCESS_KEY');
+  if (!process.env.S3_REGION || !process.env.S3_REGION.trim()) missing.push('S3_REGION');
+  if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.trim()) missing.push('DATABASE_URL');
+  return missing;
+}
+
 export function getMissingStorageEnv(): string[] {
   const missing: string[] = [];
   if (!process.env.S3_ENDPOINT || !process.env.S3_ENDPOINT.trim()) missing.push('S3_ENDPOINT');

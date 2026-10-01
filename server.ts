@@ -40,6 +40,17 @@ async function startServer() {
   app.use('/api', assetRouter);
   app.use('/', assetRouter);
 
+  // Global Error Handler para garantir resposta JSON não-vazia
+  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error('[Server Unhandled Error]:', err);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: err?.code || err?.name || 'INTERNAL_SERVER_ERROR',
+        message: err?.message || 'Erro interno do servidor',
+      });
+    }
+  });
+
   if (!isProduction) {
     // Modo Desenvolvimento: Monta o Vite via middleware
     const vite = await createViteServer({

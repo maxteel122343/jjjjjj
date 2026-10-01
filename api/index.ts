@@ -1,6 +1,6 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
-import { createAssetRouter } from '../src/server/assetRoutes';
+import { createAssetRouter, sanitizeErrorMessage } from '../src/server/assetRoutes';
 
 dotenv.config();
 
@@ -31,5 +31,22 @@ app.use('/api/v1', assetRouter);
 app.use('/v1', assetRouter);
 app.use('/api', assetRouter);
 app.use('/', assetRouter);
+
+// Global Error Handler para garantir resposta JSON não-vazia mesmo em exceções não tratadas
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  console.error('[Vercel Serverless Unhandled Error]:', err);
+  if (!res.headersSent) {
+    const rawMsg = err?.message || String(err) || 'Erro interno não especificado';
+    res.status(500).json({
+      error: err?.code || err?.name || 'INTERNAL_SERVER_ERROR',
+      message: sanitizeErrorMessage(rawMsg),
+    });
+  }
+});
+
+// Força runtime Node.js na Vercel (compatível com pg e AWS SDK)
+export const config = {
+  runtime: 'nodejs',
+};
 
 export default app;
