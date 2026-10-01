@@ -197,6 +197,7 @@ export interface Spot {
 export interface RoomData {
   id: string;
   name: string;
+  title?: string;
   previewUrl?: string;
   occupancy?: string;
   occupation?: string;
@@ -206,6 +207,7 @@ export interface RoomData {
   description: string;
   badge?: string;
   thumb?: string;
+  coverUrl?: string;
   isFeatured?: boolean;
   ambientColor?: string;
   isCenterHighlighted?: boolean;
@@ -213,6 +215,13 @@ export interface RoomData {
   isFromEditor?: boolean;
   editorRoom?: RoomEditorState;
   isPlaytest?: boolean;
+  assetId?: string;
+  visibility?: 'public' | 'private' | 'showcase';
+  sourceRoomId?: string | null;
+  isPrivate?: boolean;
+  isOwner?: boolean;
+  ownerUserId?: string | null;
+  price?: number;
 }
 
 export interface ChatMessage {
@@ -269,6 +278,8 @@ export interface CustomizationItem {
   equipped: boolean;
   slot?: string;
   assetId?: string;
+  roomId?: string;
+  isRoom?: boolean;
   price?: number;
   rarity?: 'COMUM' | 'RARO' | 'ÉLITE';
   description?: string;
