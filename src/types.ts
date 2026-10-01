@@ -80,6 +80,7 @@ export interface PlacedObject {
 
 export interface InventoryItem {
   id: string;
+  assetId?: string;
   fileName: string;
   displayName: string;
   name?: string;
