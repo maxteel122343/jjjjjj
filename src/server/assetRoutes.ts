@@ -350,8 +350,18 @@ export function createAssetRouter(): Router {
       return;
     }
 
-    // Regras de Autorização: Dono OU Marketplace Público OU Compartilhado na Sala Atual
-    let isAuthorized = asset.owner_user_id === userId || asset.visibility === 'public_marketplace';
+    // Regras de Autorização: Dono OU Presente no Inventário do Usuário OU Marketplace OU Pronto para exibição
+    let isAuthorized = asset.owner_user_id === userId || asset.visibility === 'public_marketplace' || asset.status === 'ready';
+
+    if (!isAuthorized) {
+      const invCheck = await db.query(
+        `SELECT id FROM public.inventory_items WHERE user_id = $1 AND asset_id = $2`,
+        [userId, assetId]
+      );
+      if (invCheck.rows.length > 0) {
+        isAuthorized = true;
+      }
+    }
 
     if (!isAuthorized && roomId) {
       const roomCheck = await db.query(

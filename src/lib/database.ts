@@ -41,7 +41,7 @@ export async function persistStoreItem(
         owned: true,
         applied: false,
         description: payload.description,
-        fileBlobUrl: payload.fileBlobUrl,
+        assetId: payload.originalItemId || generatedId,
         originalItemId: payload.originalItemId,
       };
       const filtered = avatars.filter((a) => a.id !== generatedId && a.name !== payload.name);
@@ -75,6 +75,7 @@ export async function persistStoreItem(
         code: `#AC${Math.floor(100 + Math.random() * 900)}`,
         name: payload.name,
         category: 'acessorios',
+        slot: payload.accessoryAttachment || 'companion_float',
         thumb: payload.thumbnailUrl || 'https://images.unsplash.com/photo-1511499767150-a48a237f0083?auto=format&fit=crop&w=400&q=80',
         owned: true,
         equipped: true,
@@ -82,7 +83,6 @@ export async function persistStoreItem(
         rarity: payload.rarity || 'RARO',
         isPublishedByCreator: true,
         author: user?.displayName || payload.author || 'Luzenne',
-        fileBlobUrl: payload.fileBlobUrl,
         description: payload.description || `Acessório 3D criado por ${user?.displayName || 'Luzenne'}.`,
         isAccessory: true,
         accessoryAttachment: payload.accessoryAttachment || 'companion_float',
@@ -93,6 +93,7 @@ export async function persistStoreItem(
         },
         actions: payload.actions || [],
         activeActionId: payload.actions?.[0]?.id || null,
+        assetId: payload.originalItemId || generatedId,
         originalItemId: payload.originalItemId,
       };
       const filtered = items.filter((i) => i.id !== generatedId && i.name !== payload.name);
@@ -106,6 +107,7 @@ export async function persistStoreItem(
         code: `#P${Math.floor(100 + Math.random() * 900)}`,
         name: payload.name,
         category: payload.objectType === 'moveis' ? 'outros' : 'publicados',
+        slot: payload.objectType || 'publicados',
         thumb: payload.thumbnailUrl || 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=400&q=80',
         owned: true,
         equipped: false,
@@ -113,10 +115,10 @@ export async function persistStoreItem(
         rarity: payload.rarity || 'RARO',
         isPublishedByCreator: true,
         author: user?.displayName || payload.author || 'Luzenne',
-        fileBlobUrl: payload.fileBlobUrl,
         description: payload.description || `Item 3D criado por ${user?.displayName || 'Luzenne'}.`,
         actions: payload.actions || [],
         activeActionId: payload.actions?.[0]?.id || null,
+        assetId: payload.originalItemId || generatedId,
         originalItemId: payload.originalItemId,
       };
       const filtered = items.filter((i) => i.id !== generatedId && i.name !== payload.name);

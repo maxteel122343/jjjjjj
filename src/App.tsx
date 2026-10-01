@@ -47,6 +47,7 @@ import { supabase } from './lib/supabase';
 import { persistStoreItem, persistShowcaseRoom, fetchPublicStoreItems, recordUserInventoryItem } from './lib/database';
 import { getGlbFile, saveGlbFile, deleteGlbFile } from './lib/storageIndexedDB';
 import { safeLocalStorageSet, sanitizeItemsForStorage } from './lib/storageUtils';
+import { fetchRemoteInventory } from './lib/assetSyncClient';
 import { Lightbulb, Sparkles, Maximize2, Minimize2 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -608,6 +609,68 @@ export const App: React.FC = () => {
     }).catch((err) => {
       console.warn('Initial fetchPublicStoreItems failed:', err);
     });
+
+    // 2. Sync account items from GET /inventory (works across different browsers / devices)
+    const targetUserId = user?.id || 'user-default';
+    fetchRemoteInventory(targetUserId).then((remoteItems) => {
+      if (remoteItems && remoteItems.length > 0) {
+        console.log(`[InventorySync] ${remoteItems.length} itens recuperados do GET /inventory`);
+        setInventory((prev) => {
+          const merged = [...prev];
+          for (const rem of remoteItems) {
+            const mappedType = rem.category === 'room_mesh' ? 'Sala' : rem.category === 'avatar' ? 'Avatar' : 'Acessorio';
+            const invItem: InventoryItem = {
+              id: rem.asset_id,
+              assetId: rem.asset_id,
+              fileName: rem.filename,
+              displayName: rem.custom_label || rem.filename,
+              thumbUrl: 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=400&q=80',
+              type: mappedType,
+              createdAt: new Date(rem.acquired_at).toLocaleDateString(),
+              modelType: 'custom_glb',
+              fileBlobUrl: rem.download_url,
+            };
+            const idx = merged.findIndex((m) => m.id === rem.asset_id || m.assetId === rem.asset_id);
+            if (idx >= 0) {
+              merged[idx] = { ...merged[idx], ...invItem };
+            } else {
+              merged.unshift(invItem);
+            }
+          }
+          return merged;
+        });
+
+        // Also ensure accessories are available in customizationItems with lightweight metadata only
+        setCustomizationItems((prev) => {
+          const merged = [...prev];
+          for (const rem of remoteItems) {
+            if (rem.category === 'accessory' || rem.category === 'item' || !rem.category) {
+              const idx = merged.findIndex((m) => m.id === rem.asset_id || m.assetId === rem.asset_id);
+              if (idx < 0) {
+                merged.unshift({
+                  id: rem.asset_id,
+                  code: `#AC${rem.asset_id.slice(0, 4)}`,
+                  name: rem.custom_label || 'Acessório 3D',
+                  category: 'acessorios',
+                  slot: 'companion_float',
+                  thumb: 'https://images.unsplash.com/photo-1511499767150-a48a237f0083?auto=format&fit=crop&w=400&q=80',
+                  owned: true,
+                  equipped: false,
+                  price: 0,
+                  rarity: 'RARO',
+                  isAccessory: true,
+                  accessoryAttachment: 'companion_float',
+                  assetId: rem.asset_id,
+                });
+              }
+            }
+          }
+          return merged;
+        });
+      }
+    }).catch((err) => {
+      console.warn('GET /inventory sync error:', err);
+    });
   }, []);
 
   const showToast = (message: string) => {
@@ -836,6 +899,8 @@ export const App: React.FC = () => {
         code: `#AC${Math.floor(100 + Math.random() * 900)}`,
         name: payload.name,
         category: 'acessorios',
+        slot: payload.accessoryAttachment || 'companion_float',
+        assetId: payload.item.assetId || (payload.item.id.startsWith('inv-') ? undefined : payload.item.id),
         thumb: payload.thumbnailUrl || payload.item.thumbUrl,
         owned: true,
         equipped: true,
@@ -843,7 +908,6 @@ export const App: React.FC = () => {
         rarity: payload.rarity,
         isPublishedByCreator: true,
         author: user?.displayName || 'Luzenne',
-        fileBlobUrl: payload.item.fileBlobUrl,
         originalItemId: payload.item.id,
         description: payload.description,
         isAccessory: true,
@@ -855,20 +919,6 @@ export const App: React.FC = () => {
         },
         actions: payload.actions || [],
       };
-
-      // Persist blob under newAccessoryItem.id in IndexedDB
-      if (payload.item.fileBlobUrl) {
-        getGlbFile(payload.item.id).then((blob) => {
-          if (blob) {
-            saveGlbFile(newAccessoryItem.id, blob);
-          } else if (payload.item.fileBlobUrl!.startsWith('blob:')) {
-            fetch(payload.item.fileBlobUrl!).then(r => r.blob()).then(blob => {
-              saveGlbFile(newAccessoryItem.id, blob);
-              saveGlbFile(payload.item.id, blob);
-            }).catch(() => {});
-          }
-        });
-      }
 
       setCustomizationItems((prev) => [newAccessoryItem, ...prev.filter((i) => i.id !== newAccessoryItem.id)]);
       showToast(`Acessório "${newAccessoryItem.name}" publicado com sucesso com ${newAccessoryItem.actions?.length || 0} ações configuradas!`);
@@ -907,23 +957,10 @@ export const App: React.FC = () => {
         isUserPublished: true,
         owned: true,
         applied: false,
-        fileBlobUrl: payload.item.fileBlobUrl,
+        assetId: payload.item.assetId || (payload.item.id.startsWith('inv-') ? undefined : payload.item.id),
         originalItemId: payload.item.id,
         description: payload.description,
       };
-
-      if (payload.item.fileBlobUrl) {
-        getGlbFile(payload.item.id).then((blob) => {
-          if (blob) {
-            saveGlbFile(newAvatar.id, blob);
-          } else if (payload.item.fileBlobUrl!.startsWith('blob:')) {
-            fetch(payload.item.fileBlobUrl!).then(r => r.blob()).then(blob => {
-              saveGlbFile(newAvatar.id, blob);
-              saveGlbFile(payload.item.id, blob);
-            }).catch(() => {});
-          }
-        });
-      }
 
       setStoreAvatars((prev) => [newAvatar, ...prev.filter((a) => a.name !== payload.name)]);
     } else if (payload.objectType === 'sala') {
@@ -943,6 +980,8 @@ export const App: React.FC = () => {
         code: `#P${Math.floor(100 + Math.random() * 900)}`,
         name: payload.name,
         category: payload.objectType === 'moveis' ? 'outros' : 'publicados',
+        slot: payload.objectType || 'publicados',
+        assetId: payload.item.assetId || (payload.item.id.startsWith('inv-') ? undefined : payload.item.id),
         thumb: payload.thumbnailUrl || payload.item.thumbUrl,
         owned: true,
         equipped: false,
@@ -950,26 +989,12 @@ export const App: React.FC = () => {
         rarity: payload.rarity,
         isPublishedByCreator: true,
         author: user?.displayName || 'Luzenne',
-        fileBlobUrl: payload.item.fileBlobUrl,
         originalItemId: payload.item.id,
         description: payload.description,
         actions: payload.actions || [],
         isAvatar: (payload.objectType as string) === 'avatar',
         isAccessory: (payload.objectType as string) === 'acessorio',
       };
-
-      if (payload.item.fileBlobUrl) {
-        getGlbFile(payload.item.id).then((blob) => {
-          if (blob) {
-            saveGlbFile(newCustomItem.id, blob);
-          } else if (payload.item.fileBlobUrl!.startsWith('blob:')) {
-            fetch(payload.item.fileBlobUrl!).then(r => r.blob()).then(blob => {
-              saveGlbFile(newCustomItem.id, blob);
-              saveGlbFile(payload.item.id, blob);
-            }).catch(() => {});
-          }
-        });
-      }
 
       setCustomizationItems((prev) => [newCustomItem, ...prev.filter((i) => i.id !== newCustomItem.id)]);
     }

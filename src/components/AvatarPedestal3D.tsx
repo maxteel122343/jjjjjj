@@ -41,7 +41,8 @@ async function loadGlbWithIndexedDBFallback(
   itemId: string | undefined,
   originalItemId: string | undefined,
   onSuccess: (gltf: any) => void,
-  onError: () => void
+  onError: () => void,
+  assetId?: string
 ) {
   const loader = new GLTFLoader();
 
@@ -55,7 +56,8 @@ async function loadGlbWithIndexedDBFallback(
             resolve(true);
           },
           undefined,
-          () => {
+          (err) => {
+            console.warn('[Pedestal3D GLTFLoader warning]:', modelUrl, err);
             resolve(false);
           }
         );
@@ -65,26 +67,43 @@ async function loadGlbWithIndexedDBFallback(
     });
   };
 
-  // 1. Try provided URL if it's available, verifying blob validity if necessary
-  if (url) {
-    if (url.startsWith('blob:')) {
-      // Test if blob URL is still alive in this session
+  // 1. PRIORIDADE MÁXIMA: Carrega pela download_url de GET /assets/{id}/resolve do Supabase Storage S3
+  const candidateAssetIds = [assetId, originalItemId, itemId].filter(
+    (id): id is string => Boolean(id && typeof id === 'string' && !id.startsWith('blob:') && !id.startsWith('data:'))
+  );
+
+  for (const candidate of candidateAssetIds) {
+    // Se o ID contiver sufixos de publicação ou prefixos, extrai o ID real do asset
+    const cleanId = candidate.includes('-pub-') ? candidate.split('-pub-')[1]?.replace(/-\d+$/, '') : candidate;
+    const idsToTry = [cleanId, candidate].filter(Boolean);
+
+    for (const testId of idsToTry) {
       try {
-        const testRes = await fetch(url).catch(() => null);
-        if (testRes && testRes.ok) {
-          const ok = await tryLoad(url);
-          if (ok) return;
+        const resolveRes = await fetch(`/api/v1/assets/${testId}/resolve`, {
+          headers: { 'x-user-id': 'user-default' },
+        }).catch(() => null);
+
+        if (resolveRes && resolveRes.ok) {
+          const data = await resolveRes.json();
+          if (data.download_url) {
+            console.log(`[Pedestal3D] Carregando modelo via download_url assinada do Storage S3 para asset ${testId}`);
+            const ok = await tryLoad(data.download_url);
+            if (ok) return;
+          }
         }
       } catch (e) {
-        // Stale blob, continue to IndexedDB fallback
+        // Continua
       }
-    } else {
-      const ok = await tryLoad(url);
-      if (ok) return;
     }
   }
 
-  // 2. Try IndexedDB by direct itemId
+  // 2. Se a URL fornecida for uma URL remota válida (https://...), carrega diretamente
+  if (url && !url.startsWith('blob:') && !url.startsWith('data:')) {
+    const ok = await tryLoad(url);
+    if (ok) return;
+  }
+
+  // 3. Fallback para IndexedDB local (se houver cópia em cache local)
   if (itemId) {
     try {
       const blob = await getGlbFile(itemId);
@@ -96,7 +115,6 @@ async function loadGlbWithIndexedDBFallback(
     } catch (e) {}
   }
 
-  // 3. Try IndexedDB by originalItemId
   if (originalItemId) {
     try {
       const blob = await getGlbFile(originalItemId);
@@ -108,7 +126,7 @@ async function loadGlbWithIndexedDBFallback(
     } catch (e) {}
   }
 
-  // 4. Try extracting key from pub- prefixes (e.g. acc-pub-item-123-172000 or pub-172000)
+  // 4. Try extracting key from pub- prefixes in IndexedDB
   if (itemId && itemId.includes('-pub-')) {
     try {
       const parts = itemId.split('-pub-');
@@ -142,7 +160,18 @@ async function loadGlbWithIndexedDBFallback(
     }
   } catch (e) {}
 
-  // 6. Fallback
+  // 6. Último recurso se ainda for blob e estiver vivo nesta aba
+  if (url && url.startsWith('blob:')) {
+    try {
+      const testRes = await fetch(url).catch(() => null);
+      if (testRes && testRes.ok) {
+        const ok = await tryLoad(url);
+        if (ok) return;
+      }
+    } catch (e) {}
+  }
+
+  // 7. Fallback procedural
   onError();
 }
 
@@ -637,7 +666,8 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
           const fallbackMesh = createDecorativeObjectMesh(selectedItemToInspect.name);
           isolatedGroup.add(fallbackMesh);
           syncGizmo();
-        }
+        },
+        (selectedItemToInspect as any).assetId || selectedItemToInspect.originalItemId
       );
       return;
     }
@@ -723,7 +753,8 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
             const proceduralAcc = createProceduralAccessory(acc);
             accGroup.add(proceduralAcc);
             syncGizmo();
-          }
+          },
+          (acc as any).assetId || acc.originalItemId
         );
       });
     };

@@ -267,6 +267,8 @@ export interface CustomizationItem {
   thumb: string;
   owned: boolean;
   equipped: boolean;
+  slot?: string;
+  assetId?: string;
   price?: number;
   rarity?: 'COMUM' | 'RARO' | 'ÉLITE';
   description?: string;
@@ -293,6 +295,7 @@ export interface StoreAvatar {
   tags: string[];
   owned: boolean;
   applied: boolean;
+  assetId?: string;
   description?: string;
   author?: string;
   isUserPublished?: boolean;

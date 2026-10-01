@@ -216,7 +216,7 @@ export const UploadGLBModal: React.FC<UploadGLBModalProps> = ({
         publishMode: publishMode,
         description:
           publishDescription.trim() || `Item 3D criado por ${userDisplayName}.`,
-        fileBlobUrl: uploadedItem.fileBlobUrl,
+        originalItemId: uploadedItem.assetId || uploadedItem.id,
         author: userDisplayName,
       },
       null
