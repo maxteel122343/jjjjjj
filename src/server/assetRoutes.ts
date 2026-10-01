@@ -1,12 +1,31 @@
 import { Router, Request, Response } from 'express';
+import { createHash } from 'crypto';
 import { getDatabasePool } from './db';
 import { storageService, getMissingStorageEnv, isStorageConfigured } from './storage';
 
-// Helper de autenticação simples: extrai user_id de token JWT ou cabeçalho x-user-id
-function getUserIdFromRequest(req: Request): string | null {
+/**
+ * Garante que qualquer identificador de usuário (mesmo strings como 'user-default' ou IDs de sessão)
+ * seja convertido de forma determinística em um UUID válido para o tipo UUID do PostgreSQL.
+ */
+export function ensureValidUUID(id: string | null | undefined): string {
+  if (!id || typeof id !== 'string') {
+    id = 'user-default';
+  }
+  const clean = id.trim().toLowerCase();
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  if (uuidRegex.test(clean)) {
+    return clean;
+  }
+  // Gera UUID RFC 4122 v4-like determinístico a partir do hash
+  const hash = createHash('md5').update(clean).digest('hex');
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
+// Helper de autenticação: extrai user_id de token JWT ou cabeçalho x-user-id garantindo formato UUID válido
+function getUserIdFromRequest(req: Request): string {
   const customUserId = req.headers['x-user-id'];
   if (typeof customUserId === 'string' && customUserId.trim()) {
-    return customUserId.trim();
+    return ensureValidUUID(customUserId.trim());
   }
 
   const authHeader = req.headers.authorization;
@@ -18,15 +37,15 @@ function getUserIdFromRequest(req: Request): string | null {
       if (parts.length === 3) {
         const payloadJson = Buffer.from(parts[1], 'base64').toString('utf8');
         const payload = JSON.parse(payloadJson);
-        if (payload.sub) return payload.sub;
+        if (payload.sub) return ensureValidUUID(payload.sub);
       }
     } catch {
       // Ignora falha de parse
     }
-    return token;
+    return ensureValidUUID(token);
   }
 
-  return null;
+  return ensureValidUUID('user-default');
 }
 
 export function createAssetRouter(): Router {
@@ -168,7 +187,12 @@ export function createAssetRouter(): Router {
       });
     } catch (err: any) {
       await client.query('ROLLBACK');
-      res.status(500).json({ error: 'INIT_UPLOAD_FAILED', details: err.message });
+      console.error('[API /assets/upload/init error]:', err);
+      res.status(500).json({
+        error: 'INIT_UPLOAD_FAILED',
+        message: err.message || 'Falha ao inicializar sessão de upload no banco',
+        details: err.message,
+      });
     } finally {
       client.release();
     }
