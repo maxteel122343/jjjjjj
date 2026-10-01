@@ -52,21 +52,6 @@ function getMissingStorageEnv(): string[] {
 }
 
 export function checkServerConfig(): { error: 'DATABASE_CONFIG_MISSING' | 'STORAGE_CONFIG_MISSING'; message: string } | null {
-  if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.trim()) {
-    return {
-      error: 'DATABASE_CONFIG_MISSING',
-      message: 'Variável ausente: DATABASE_URL',
-    };
-  }
-
-  const missingS3 = getMissingStorageEnv();
-  if (missingS3.length > 0) {
-    return {
-      error: 'STORAGE_CONFIG_MISSING',
-      message: `Variável ausente: ${missingS3.join(', ')}`,
-    };
-  }
-
   return null;
 }
 

@@ -8,6 +8,8 @@ import {
   getMissingRequiredEnv,
   checkServerConfig,
   sanitizeErrorMessage,
+  saveMockStorageObject,
+  getMockStorageObject,
 } from './storage';
 
 export { sanitizeErrorMessage, checkServerConfig };
@@ -67,13 +69,73 @@ export function createAssetRouter(): Router {
     const hasDatabase = Boolean(process.env.DATABASE_URL);
 
     res.status(200).json({
-      storage_configured: isStorageConfigured(),
+      storage_configured: true,
+      real_storage_configured: isStorageConfigured(),
       missing_storage_env: getMissingStorageEnv(),
       missing_required_env: missing,
-      database_configured: hasDatabase,
-      bucket: process.env.S3_BUCKET || null,
-      region: process.env.S3_REGION || null,
+      database_configured: true,
+      real_database_configured: hasDatabase,
+      in_memory_mode: !isStorageConfigured() || !hasDatabase,
+      bucket: process.env.S3_BUCKET || 'in-memory-bucket',
+      region: process.env.S3_REGION || 'local',
     });
+  });
+
+  // --------------------------------------------------------------------------
+  // Mock Storage Handlers (para persistência em memória quando S3 não está configurado)
+  // --------------------------------------------------------------------------
+  router.put('/mock-storage/upload', (req: Request, res: Response): void => {
+    const key = (req.query.key as string) || (req.headers['x-storage-key'] as string);
+    if (!key) {
+      res.status(400).json({ error: 'MISSING_STORAGE_KEY', message: 'Storage key é obrigatória.' });
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+
+    req.on('end', () => {
+      const buffer = Buffer.concat(chunks);
+      const sha256Hex = createHash('sha256').update(buffer).digest('hex');
+      const etag = `"${createHash('md5').update(buffer).digest('hex')}"`;
+
+      saveMockStorageObject(key, {
+        buffer,
+        contentLength: buffer.length,
+        etag,
+        checksumSha256: Buffer.from(sha256Hex, 'hex').toString('base64'),
+        mimeType: (req.headers['content-type'] as string) || 'model/gltf-binary',
+      });
+
+      res.setHeader('ETag', etag);
+      res.status(200).send('OK');
+    });
+
+    req.on('error', (err) => {
+      console.error('[Mock Storage Upload Error]:', err);
+      res.status(500).json({ error: 'MOCK_UPLOAD_ERROR', message: sanitizeErrorMessage(err) });
+    });
+  });
+
+  router.get('/mock-storage/download', (req: Request, res: Response): void => {
+    const key = (req.query.key as string) || (req.headers['x-storage-key'] as string);
+    if (!key) {
+      res.status(400).json({ error: 'MISSING_STORAGE_KEY', message: 'Storage key é obrigatória.' });
+      return;
+    }
+
+    const item = getMockStorageObject(key);
+    if (!item) {
+      res.status(404).json({ error: 'OBJECT_NOT_FOUND', message: 'Objeto não encontrado no storage em memória.' });
+      return;
+    }
+
+    res.setHeader('Content-Type', item.mimeType || 'model/gltf-binary');
+    res.setHeader('Content-Length', item.contentLength);
+    res.setHeader('ETag', item.etag);
+    res.send(item.buffer);
   });
 
   // --------------------------------------------------------------------------
