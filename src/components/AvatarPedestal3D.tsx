@@ -47,22 +47,41 @@ async function loadGlbWithIndexedDBFallback(
 
   const tryLoad = (modelUrl: string): Promise<boolean> => {
     return new Promise((resolve) => {
-      loader.load(
-        modelUrl,
-        (gltf) => {
-          onSuccess(gltf);
-          resolve(true);
-        },
-        undefined,
-        () => resolve(false)
-      );
+      try {
+        loader.load(
+          modelUrl,
+          (gltf) => {
+            onSuccess(gltf);
+            resolve(true);
+          },
+          undefined,
+          () => {
+            resolve(false);
+          }
+        );
+      } catch (err) {
+        resolve(false);
+      }
     });
   };
 
-  // 1. Try provided URL if it's available
+  // 1. Try provided URL if it's available, verifying blob validity if necessary
   if (url) {
-    const ok = await tryLoad(url);
-    if (ok) return;
+    if (url.startsWith('blob:')) {
+      // Test if blob URL is still alive in this session
+      try {
+        const testRes = await fetch(url).catch(() => null);
+        if (testRes && testRes.ok) {
+          const ok = await tryLoad(url);
+          if (ok) return;
+        }
+      } catch (e) {
+        // Stale blob, continue to IndexedDB fallback
+      }
+    } else {
+      const ok = await tryLoad(url);
+      if (ok) return;
+    }
   }
 
   // 2. Try IndexedDB by direct itemId

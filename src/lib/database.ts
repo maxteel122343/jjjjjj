@@ -7,6 +7,7 @@ import {
   StoreAvatar,
   AvatarPoseConfig,
 } from '../types';
+import { safeLocalStorageSet, sanitizeItemsForStorage } from './storageUtils';
 
 const STORE_ITEMS_LOCAL_KEY = '3d_social_creator_customization_items';
 const STORE_AVATARS_LOCAL_KEY = '3d_social_creator_store_avatars';
@@ -44,8 +45,8 @@ export async function persistStoreItem(
         originalItemId: payload.originalItemId,
       };
       const filtered = avatars.filter((a) => a.id !== generatedId && a.name !== payload.name);
-      const updated = [newAvatar, ...filtered];
-      localStorage.setItem(STORE_AVATARS_LOCAL_KEY, JSON.stringify(updated));
+      const updated = sanitizeItemsForStorage([newAvatar, ...filtered]);
+      safeLocalStorageSet(STORE_AVATARS_LOCAL_KEY, JSON.stringify(updated));
     } else if (payload.objectType === 'pose') {
       const savedPosesRaw = localStorage.getItem(STORE_POSES_LOCAL_KEY);
       const poses: AvatarPoseConfig[] = savedPosesRaw ? JSON.parse(savedPosesRaw) : [];
@@ -65,7 +66,7 @@ export async function persistStoreItem(
       };
       const filtered = poses.filter((p) => p.id !== generatedId && p.name !== payload.name);
       const updated = [newPose, ...filtered];
-      localStorage.setItem(STORE_POSES_LOCAL_KEY, JSON.stringify(updated));
+      safeLocalStorageSet(STORE_POSES_LOCAL_KEY, JSON.stringify(updated));
     } else if (payload.objectType === 'acessorio') {
       const savedItemsRaw = localStorage.getItem(STORE_ITEMS_LOCAL_KEY);
       const items: CustomizationItem[] = savedItemsRaw ? JSON.parse(savedItemsRaw) : [];
@@ -95,8 +96,8 @@ export async function persistStoreItem(
         originalItemId: payload.originalItemId,
       };
       const filtered = items.filter((i) => i.id !== generatedId && i.name !== payload.name);
-      const updated = [newAccessory, ...filtered];
-      localStorage.setItem(STORE_ITEMS_LOCAL_KEY, JSON.stringify(updated));
+      const updated = sanitizeItemsForStorage([newAccessory, ...filtered]);
+      safeLocalStorageSet(STORE_ITEMS_LOCAL_KEY, JSON.stringify(updated));
     } else {
       const savedItemsRaw = localStorage.getItem(STORE_ITEMS_LOCAL_KEY);
       const items: CustomizationItem[] = savedItemsRaw ? JSON.parse(savedItemsRaw) : [];
@@ -119,8 +120,8 @@ export async function persistStoreItem(
         originalItemId: payload.originalItemId,
       };
       const filtered = items.filter((i) => i.id !== generatedId && i.name !== payload.name);
-      const updated = [newItem, ...filtered];
-      localStorage.setItem(STORE_ITEMS_LOCAL_KEY, JSON.stringify(updated));
+      const updated = sanitizeItemsForStorage([newItem, ...filtered]);
+      safeLocalStorageSet(STORE_ITEMS_LOCAL_KEY, JSON.stringify(updated));
     }
   } catch (storageErr) {
     console.warn('LocalStorage save error:', storageErr);
@@ -203,7 +204,7 @@ export async function persistShowcaseRoom(
       publishMode: options?.publishMode || 'simples',
     };
     const updated = [showcaseRoomEntry, ...roomsList.filter((r: any) => r.id !== roomId)];
-    localStorage.setItem(SHOWCASE_ROOMS_LOCAL_KEY, JSON.stringify(updated));
+    safeLocalStorageSet(SHOWCASE_ROOMS_LOCAL_KEY, JSON.stringify(updated));
 
     // Also update editor rooms
     const editorRoomsRaw = localStorage.getItem('3d_social_creator_rooms');
@@ -212,7 +213,7 @@ export async function persistShowcaseRoom(
       const updatedEditorRooms = editorRooms.map((r) =>
         r.id === room.id ? { ...r, name: room.name, isPublished: true, publishedAt: new Date().toISOString() } : r
       );
-      localStorage.setItem('3d_social_creator_rooms', JSON.stringify(updatedEditorRooms));
+      safeLocalStorageSet('3d_social_creator_rooms', JSON.stringify(updatedEditorRooms));
     }
   } catch (err) {
     console.warn('Failed to update showcase rooms in localStorage:', err);
@@ -463,7 +464,7 @@ export async function deletePublishedRoom(
     if (saved) {
       const list = JSON.parse(saved);
       const filtered = list.filter((r: any) => r.id !== roomId);
-      localStorage.setItem(SHOWCASE_ROOMS_LOCAL_KEY, JSON.stringify(filtered));
+      safeLocalStorageSet(SHOWCASE_ROOMS_LOCAL_KEY, JSON.stringify(filtered));
     }
     // Also mark in editor rooms if needed
     const editorRoomsRaw = localStorage.getItem('3d_social_creator_rooms');
@@ -472,7 +473,7 @@ export async function deletePublishedRoom(
       const updated = editorRooms.map((r) =>
         r.id === roomId ? { ...r, isPublished: false, publishedAt: undefined } : r
       );
-      localStorage.setItem('3d_social_creator_rooms', JSON.stringify(updated));
+      safeLocalStorageSet('3d_social_creator_rooms', JSON.stringify(updated));
     }
     return { success: true };
   } catch (err: any) {
@@ -501,7 +502,7 @@ export async function deletePublishedItem(
       const raw = localStorage.getItem(STORE_AVATARS_LOCAL_KEY);
       if (raw) {
         const list = JSON.parse(raw);
-        localStorage.setItem(
+        safeLocalStorageSet(
           STORE_AVATARS_LOCAL_KEY,
           JSON.stringify(list.filter((a: any) => a.id !== itemId))
         );
@@ -510,7 +511,7 @@ export async function deletePublishedItem(
       const raw = localStorage.getItem(STORE_POSES_LOCAL_KEY);
       if (raw) {
         const list = JSON.parse(raw);
-        localStorage.setItem(
+        safeLocalStorageSet(
           STORE_POSES_LOCAL_KEY,
           JSON.stringify(list.filter((p: any) => p.id !== itemId))
         );
@@ -519,7 +520,7 @@ export async function deletePublishedItem(
       const raw = localStorage.getItem(STORE_ITEMS_LOCAL_KEY);
       if (raw) {
         const list = JSON.parse(raw);
-        localStorage.setItem(
+        safeLocalStorageSet(
           STORE_ITEMS_LOCAL_KEY,
           JSON.stringify(list.filter((i: any) => i.id !== itemId))
         );

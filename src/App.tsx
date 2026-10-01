@@ -46,6 +46,7 @@ import {
 import { supabase } from './lib/supabase';
 import { persistStoreItem, persistShowcaseRoom, fetchPublicStoreItems, recordUserInventoryItem } from './lib/database';
 import { getGlbFile, saveGlbFile, deleteGlbFile } from './lib/storageIndexedDB';
+import { safeLocalStorageSet, sanitizeItemsForStorage } from './lib/storageUtils';
 import { Lightbulb, Sparkles, Maximize2, Minimize2 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -123,7 +124,7 @@ export const App: React.FC = () => {
 
   const handleUpdateRoomAccessSlots = (newSlots: RoomAccessSlot[]) => {
     setRoomAccessSlots(newSlots);
-    localStorage.setItem('3d_social_room_access_inventory', JSON.stringify(newSlots));
+    safeLocalStorageSet('3d_social_room_access_inventory', JSON.stringify(newSlots));
   };
 
   // Rooms State (Room A | Room B | + Nova room)
@@ -225,7 +226,7 @@ export const App: React.FC = () => {
   });
 
   useEffect(() => {
-    localStorage.setItem('3d_social_spot_visual_config', JSON.stringify(spotVisualConfig));
+    safeLocalStorageSet('3d_social_spot_visual_config', JSON.stringify(spotVisualConfig));
   }, [spotVisualConfig]);
 
   const [isSpotVisualConfigModalOpen, setIsSpotVisualConfigModalOpen] = useState(false);
@@ -295,7 +296,7 @@ export const App: React.FC = () => {
       );
       if (customUpdated) {
         setCustomizationItems(updatedCustomItems);
-        localStorage.setItem('3d_social_creator_customization_items', JSON.stringify(updatedCustomItems));
+        safeLocalStorageSet('3d_social_creator_customization_items', JSON.stringify(sanitizeItemsForStorage(updatedCustomItems)));
       }
 
       // 3. Restore Store Avatars
@@ -331,7 +332,7 @@ export const App: React.FC = () => {
       );
       if (avatarsUpdated) {
         setStoreAvatars(updatedAvatars);
-        localStorage.setItem('3d_social_creator_store_avatars', JSON.stringify(updatedAvatars));
+        safeLocalStorageSet('3d_social_creator_store_avatars', JSON.stringify(sanitizeItemsForStorage(updatedAvatars)));
       }
 
       // 4. Restore Room Scene and Placed Objects
@@ -362,7 +363,7 @@ export const App: React.FC = () => {
 
   // Save state
   useEffect(() => {
-    localStorage.setItem('3d_social_creator_rooms', JSON.stringify(rooms));
+    safeLocalStorageSet('3d_social_creator_rooms', JSON.stringify(rooms));
   }, [rooms]);
 
   // Auto-sync: If a room has sceneAssetBlobUrl but no corresponding 'cenario' in placedObjects,
@@ -401,24 +402,24 @@ export const App: React.FC = () => {
   }, [inventory]);
 
   useEffect(() => {
-    localStorage.setItem('3d_social_creator_inventory', JSON.stringify(inventory));
+    safeLocalStorageSet('3d_social_creator_inventory', JSON.stringify(sanitizeItemsForStorage(inventory)));
   }, [inventory]);
 
   useEffect(() => {
-    localStorage.setItem('3d_social_creator_customization_items', JSON.stringify(customizationItems));
+    safeLocalStorageSet('3d_social_creator_customization_items', JSON.stringify(sanitizeItemsForStorage(customizationItems)));
   }, [customizationItems]);
 
   useEffect(() => {
-    localStorage.setItem('3d_social_creator_store_avatars', JSON.stringify(storeAvatars));
+    safeLocalStorageSet('3d_social_creator_store_avatars', JSON.stringify(sanitizeItemsForStorage(storeAvatars)));
   }, [storeAvatars]);
 
   useEffect(() => {
-    localStorage.setItem('3d_social_creator_poses', JSON.stringify(avatarPoses));
+    safeLocalStorageSet('3d_social_creator_poses', JSON.stringify(avatarPoses));
   }, [avatarPoses]);
 
   useEffect(() => {
     if (user) {
-      localStorage.setItem('3d_social_creator_user', JSON.stringify(user));
+      safeLocalStorageSet('3d_social_creator_user', JSON.stringify(user));
     }
   }, [user]);
 
@@ -436,14 +437,14 @@ export const App: React.FC = () => {
       isGuest: true,
     };
     setUser(guestUser);
-    localStorage.setItem('3d_social_creator_user', JSON.stringify(guestUser));
+    safeLocalStorageSet('3d_social_creator_user', JSON.stringify(guestUser));
     showToast('Você saiu da sua conta.');
   };
 
   const handlePublishPose = (newPose: AvatarPoseConfig) => {
     setAvatarPoses((prev) => {
       const updated = [newPose, ...prev.filter((p) => p.id !== newPose.id)];
-      localStorage.setItem('3d_social_creator_poses', JSON.stringify(updated));
+      safeLocalStorageSet('3d_social_creator_poses', JSON.stringify(updated));
       return updated;
     });
 
@@ -476,7 +477,7 @@ export const App: React.FC = () => {
     const targetPose = avatarPoses.find((p) => p.id === poseId);
     setAvatarPoses((prev) => {
       const updated = prev.map((p) => (p.id === poseId ? { ...p, owned: true } : p));
-      localStorage.setItem('3d_social_creator_poses', JSON.stringify(updated));
+      safeLocalStorageSet('3d_social_creator_poses', JSON.stringify(updated));
       return updated;
     });
 
@@ -665,7 +666,7 @@ export const App: React.FC = () => {
 
   const handleSelectActiveAvatar = (avatarId: string) => {
     setActiveAvatarId(avatarId);
-    localStorage.setItem('3d_social_creator_active_avatar_id', avatarId);
+    safeLocalStorageSet('3d_social_creator_active_avatar_id', avatarId);
     setStoreAvatars((prev) =>
       prev.map((a) => ({
         ...a,
@@ -676,7 +677,7 @@ export const App: React.FC = () => {
 
   const handleAcquireStoreAvatar = (avatarId: string) => {
     setActiveAvatarId(avatarId);
-    localStorage.setItem('3d_social_creator_active_avatar_id', avatarId);
+    safeLocalStorageSet('3d_social_creator_active_avatar_id', avatarId);
     const targetAvatar = storeAvatars.find((a) => a.id === avatarId);
     setStoreAvatars((prev) =>
       prev.map((a) => {
@@ -1064,16 +1065,16 @@ export const App: React.FC = () => {
     if (restored.avatarPoses) setAvatarPoses(restored.avatarPoses);
     if (restored.spotVisualConfig) setSpotVisualConfig(restored.spotVisualConfig);
 
-    localStorage.setItem('3d_social_creator_rooms', JSON.stringify(restored.rooms));
-    localStorage.setItem('3d_social_creator_inventory', JSON.stringify(restored.inventory));
+    safeLocalStorageSet('3d_social_creator_rooms', JSON.stringify(restored.rooms));
+    safeLocalStorageSet('3d_social_creator_inventory', JSON.stringify(sanitizeItemsForStorage(restored.inventory)));
     if (restored.customizationItems) {
-      localStorage.setItem('3d_social_creator_customization_items', JSON.stringify(restored.customizationItems));
+      safeLocalStorageSet('3d_social_creator_customization_items', JSON.stringify(sanitizeItemsForStorage(restored.customizationItems)));
     }
     if (restored.storeAvatars) {
-      localStorage.setItem('3d_social_creator_store_avatars', JSON.stringify(restored.storeAvatars));
+      safeLocalStorageSet('3d_social_creator_store_avatars', JSON.stringify(sanitizeItemsForStorage(restored.storeAvatars)));
     }
     if (restored.avatarPoses) {
-      localStorage.setItem('3d_social_creator_poses', JSON.stringify(restored.avatarPoses));
+      safeLocalStorageSet('3d_social_creator_poses', JSON.stringify(restored.avatarPoses));
     }
 
     setCurrentScreen('editor');
@@ -1954,7 +1955,7 @@ export const App: React.FC = () => {
               const updated = prev.map((it) =>
                 it.id === itemId ? { ...it, accessoryTransform: transform, equipped: true } : it
               );
-              localStorage.setItem('3d_social_creator_customization_items', JSON.stringify(updated));
+              safeLocalStorageSet('3d_social_creator_customization_items', JSON.stringify(sanitizeItemsForStorage(updated)));
               return updated;
             });
 

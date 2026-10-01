@@ -79,6 +79,8 @@ interface UserCustomizationViewProps {
   onOpenPublicationsModal?: () => void;
 }
 
+import { safeLocalStorageSet } from '../lib/storageUtils';
+
 export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   onBackToLobby,
   user,
@@ -169,7 +171,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
 
   const handleUpdateRoomAccessSlots = (newSlots: RoomAccessSlot[]) => {
     setRoomAccessSlots(newSlots);
-    localStorage.setItem('3d_social_room_access_inventory', JSON.stringify(newSlots));
+    safeLocalStorageSet('3d_social_room_access_inventory', JSON.stringify(newSlots));
     if (onUpdateRoomAccessSlots) {
       onUpdateRoomAccessSlots(newSlots);
     }

@@ -22,6 +22,7 @@ import { PoseGrid } from './PoseGrid';
 import { GlassChat } from './GlassChat';
 import { SpeechBubbleOverlay } from './SpeechBubbleOverlay';
 import { RoomAccessBar } from './RoomAccessBar';
+import { safeLocalStorageSet } from '../lib/storageUtils';
 
 interface RoomViewProps {
   room: RoomData;
@@ -139,7 +140,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
   const handleUpdateRoomAccessSlots = (newSlots: RoomAccessSlot[]) => {
     setRoomAccessSlots(newSlots);
-    localStorage.setItem('3d_social_room_access_inventory', JSON.stringify(newSlots));
+    safeLocalStorageSet('3d_social_room_access_inventory', JSON.stringify(newSlots));
     if (onUpdateRoomAccessSlots) {
       onUpdateRoomAccessSlots(newSlots);
     }
