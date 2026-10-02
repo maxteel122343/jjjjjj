@@ -184,12 +184,10 @@ export const storageService = {
     const command = new GetObjectCommand({
       Bucket: bucket,
       Key: params.storageKey,
-      ResponseContentType: 'model/gltf-binary',
-      ResponseContentDisposition: `inline; filename="${safeFilename}"`,
     });
 
     return getSignedUrl(client, command, {
-      expiresIn: 600,
+      expiresIn: 3600,
     });
   },
 };
