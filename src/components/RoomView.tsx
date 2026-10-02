@@ -375,13 +375,21 @@ export const RoomView: React.FC<RoomViewProps> = ({
     };
   }, [effectiveRoomId, tabSessionId]);
 
+  // Auto-detect custom avatar object from editor room if not explicitly passed
+  const effectiveCustomAvatarObject =
+    customAvatarObject ||
+    room.editorRoom?.placedObjects.find(
+      (o) => o.isAvatar || o.type === 'avatar' || o.name.toLowerCase().includes('avatar')
+    ) ||
+    null;
+
   useEffect(() => {
     if (roomChannelRef.current) {
       const myDisplayName = user?.displayName || 'Visitante';
       const customUrl =
         effectiveCustomAvatarObject?.fileBlobUrl ||
-        effectiveCustomAvatarObject?.asset_url ||
-        effectiveCustomAvatarObject?.url;
+        (effectiveCustomAvatarObject as any)?.asset_url ||
+        (effectiveCustomAvatarObject as any)?.url;
 
       roomChannelRef.current.track({
         sessionId: tabSessionId,
@@ -402,14 +410,6 @@ export const RoomView: React.FC<RoomViewProps> = ({
     }, 2000);
     return () => clearInterval(timer);
   }, []);
-
-  // Auto-detect custom avatar object from editor room if not explicitly passed
-  const effectiveCustomAvatarObject =
-    customAvatarObject ||
-    room.editorRoom?.placedObjects.find(
-      (o) => o.isAvatar || o.type === 'avatar' || o.name.toLowerCase().includes('avatar')
-    ) ||
-    null;
 
   return (
     <div id="room-view-container" className="relative w-screen h-screen overflow-hidden bg-[#141416] select-none">
