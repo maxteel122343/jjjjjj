@@ -157,6 +157,12 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     loadPublicShowcaseRooms();
+    if (currentScreen === 'lobby') {
+      const interval = setInterval(() => {
+        loadPublicShowcaseRooms();
+      }, 5000);
+      return () => clearInterval(interval);
+    }
   }, [currentScreen]);
 
   // Inventory State (GLB files uploaded) - vem EXCLUSIVAMENTE de GET /api/v1/inventory
@@ -1888,17 +1894,23 @@ export const App: React.FC = () => {
         ambientColor: '#ffd700',
       }));
 
-    const combined = [...INITIAL_LOBBY_ROOMS, ...publishedEditorRooms];
+    const combined = [...INITIAL_LOBBY_ROOMS];
 
     for (const pRoom of publicShowcaseRooms) {
-      if (!combined.some((c) => c.id === pRoom.id || c.name === pRoom.name)) {
+      if (!combined.some((c) => c.id === pRoom.id)) {
         combined.push(pRoom);
       }
     }
 
     for (const sRoom of localShowcaseRooms) {
-      if (!combined.some((c) => c.id === sRoom.id || c.name === sRoom.name)) {
+      if (!combined.some((c) => c.id === sRoom.id)) {
         combined.push(sRoom);
+      }
+    }
+
+    for (const eRoom of publishedEditorRooms) {
+      if (!combined.some((c) => c.id === eRoom.id)) {
+        combined.push(eRoom);
       }
     }
 

@@ -182,29 +182,71 @@ export async function persistShowcaseRoom(
     thumbnailUrl?: string;
   }
 ): Promise<{ success: boolean; id: string; error?: string }> {
-  const roomId = room.id || `room-${Date.now()}`;
+  let roomId = room.id && room.id.includes('-') && room.id.length === 36
+    ? room.id
+    : `pub-room-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+
   const finalThumb =
     options?.thumbnailUrl ||
     'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80';
 
-  // 1. ALWAYS persist to LocalStorage FIRST (Guarantees local & offline persistence)
+  const showcaseRoomEntry = {
+    id: roomId,
+    name: room.name,
+    description: `Sala criada por ${user?.displayName || 'Luzenne'}`,
+    occupancy: '1/8',
+    currentUsers: 1,
+    maxUsers: 8,
+    theme: options?.hashtags?.[0] || '#vitrine3d',
+    thumb: finalThumb,
+    badge: 'CRIADOR',
+    isFromEditor: true,
+    editorRoom: { ...room, isPublished: true },
+    price: options?.price || 0,
+    publishMode: options?.publishMode || 'simples',
+  };
+
+  // 1. Sync to Supabase (works for logged-in or guest users)
+  try {
+    const safeUserId =
+      user && !user.isGuest && user.id && user.id.includes('-') && user.id.length === 36
+        ? user.id
+        : null;
+
+    const payload = {
+      user_id: safeUserId,
+      name: room.name,
+      title: room.name,
+      description: `Sala criada por ${user?.displayName || 'Luzenne'}`,
+      boundary: room.boundary,
+      spots: room.spots,
+      placed_objects: room.placedObjects,
+      hashtags: options?.hashtags || ['#sala', '#vitrine3d'],
+      price: options?.price || 0,
+      publish_mode: options?.publishMode || 'simples',
+      thumbnail_url: finalThumb,
+      cover_url: finalThumb,
+      is_published: true,
+    };
+
+    const { data: insertedData, error: insertError } = await supabase
+      .from('showcase_rooms')
+      .insert([payload])
+      .select();
+
+    if (!insertError && insertedData && insertedData[0]?.id) {
+      roomId = insertedData[0].id;
+      showcaseRoomEntry.id = roomId;
+      showcaseRoomEntry.editorRoom.id = roomId;
+    }
+  } catch (err: any) {
+    console.warn('Supabase showcase_rooms insert fallback:', err?.message);
+  }
+
+  // 2. ALWAYS persist to LocalStorage
   try {
     const savedRoomsRaw = localStorage.getItem(SHOWCASE_ROOMS_LOCAL_KEY);
     const roomsList = savedRoomsRaw ? JSON.parse(savedRoomsRaw) : [];
-    const showcaseRoomEntry = {
-      id: roomId,
-      name: room.name,
-      description: `Sala criada por ${user?.displayName || 'Luzenne'}`,
-      occupancy: '1/8',
-      currentUsers: 1,
-      maxUsers: 8,
-      theme: options?.hashtags?.[0] || '#vitrine3d',
-      thumb: finalThumb,
-      badge: 'CRIADOR',
-      editorRoom: { ...room, isPublished: true },
-      price: options?.price || 0,
-      publishMode: options?.publishMode || 'simples',
-    };
     const updated = [showcaseRoomEntry, ...roomsList.filter((r: any) => r.id !== roomId)];
     safeLocalStorageSet(SHOWCASE_ROOMS_LOCAL_KEY, JSON.stringify(updated));
 
@@ -219,36 +261,6 @@ export async function persistShowcaseRoom(
     }
   } catch (err) {
     console.warn('Failed to update showcase rooms in localStorage:', err);
-  }
-
-  // 2. Try to sync to Supabase (works for logged-in or guest users)
-  try {
-    const safeUserId =
-      user && !user.isGuest && user.id && user.id.includes('-') && user.id.length === 36
-        ? user.id
-        : null;
-
-    const payload = {
-      user_id: safeUserId,
-      name: room.name,
-      description: `Sala criada por ${user?.displayName || 'Luzenne'}`,
-      boundary: room.boundary,
-      spots: room.spots,
-      placed_objects: room.placedObjects,
-      hashtags: options?.hashtags || ['#sala', '#vitrine3d'],
-      price: options?.price || 0,
-      publish_mode: options?.publishMode || 'simples',
-      thumbnail_url: finalThumb,
-      is_published: true,
-    };
-
-    if (roomId && roomId.includes('-') && roomId.length === 36) {
-      await supabase.from('showcase_rooms').upsert([{ id: roomId, ...payload }]);
-    } else {
-      await supabase.from('showcase_rooms').insert([payload]);
-    }
-  } catch (err: any) {
-    console.warn('Supabase showcase_rooms insert fallback:', err?.message);
   }
 
   return { success: true, id: roomId };
@@ -447,20 +459,21 @@ export async function fetchPublicShowcaseRooms(): Promise<any[]> {
 
       const supabaseRooms = data.map((row) => ({
         id: row.id,
-        name: row.name,
+        name: row.name || row.title || 'Sala 3D',
         description: row.description || `Sala criada por criador 3D`,
         occupancy: '1/8',
         currentUsers: 1,
         maxUsers: 8,
         theme: row.hashtags?.[0] || '#vitrine3d',
-        thumb: row.thumbnail_url || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80',
+        thumb: row.cover_url || row.thumbnail_url || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80',
         badge: 'CRIADOR',
+        isFromEditor: true,
         price: row.price || 0,
         publishMode: row.publish_mode || 'simples',
         editorRoom: {
           id: row.id,
-          name: row.name,
-          sceneAssetId: 'inv-scene-2',
+          name: row.name || row.title || 'Sala 3D',
+          sceneAssetId: row.asset_id || 'inv-scene-2',
           placedObjects: row.placed_objects || [],
           spots: row.spots || [],
           boundary: row.boundary || { x: 8, y: 3, z: 8, isConfirmed: true },
@@ -470,7 +483,7 @@ export async function fetchPublicShowcaseRooms(): Promise<any[]> {
 
       const merged = [...supabaseRooms];
       for (const item of localList) {
-        if (!merged.some((m) => m.id === item.id || m.name === item.name)) {
+        if (!merged.some((m) => m.id === item.id)) {
           merged.push(item);
         }
       }
