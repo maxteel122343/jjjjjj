@@ -18,6 +18,14 @@ import {
   createLoftArchitecture,
 } from '../lib/roomArchitectures';
 
+export interface RemotePlayerInfo {
+  userId: string;
+  displayName: string;
+  spotId: number | string;
+  avatar?: StoreAvatar | null;
+  poseId?: string;
+}
+
 interface LoungeCanvas3DProps {
   currentPose: AvatarPose;
   transform: AvatarTransform;
@@ -34,6 +42,7 @@ interface LoungeCanvas3DProps {
   gizmoMode?: GizmoMode;
   onChangeTransform?: (newTransform: AvatarTransform) => void;
   spotVisualConfig?: SpotVisualConfig;
+  remotePlayers?: RemotePlayerInfo[];
 }
 
 export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
@@ -52,9 +61,11 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
   gizmoMode = 'mover',
   onChangeTransform,
   spotVisualConfig,
+  remotePlayers,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const playerGroupRef = useRef<THREE.Group | null>(null);
+  const remotePlayersGroupRef = useRef<THREE.Group | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -244,10 +255,24 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
     rug.receiveShadow = true;
     defaultArchitectureGroup.add(rug);
 
-    // If editorRoom has a custom 3D scenario uploaded/set, load it and hide default walls!
-    if (editorRoom?.sceneAssetBlobUrl) {
+    // 1. Scenario / Architecture GLB loading with safe cross-origin fallback
+    const isLoftTheme = Boolean(
+      editorRoom?.sceneAssetId === 'inv-scene-2' ||
+      editorRoom?.name?.toLowerCase().includes('loft') ||
+      editorRoom?.name?.toLowerCase().includes('japanese') ||
+      editorRoom?.name?.toLowerCase().includes('interior')
+    );
+
+    const isScarletTheme = Boolean(
+      editorRoom?.sceneAssetId === 'inv-scene-1' ||
+      editorRoom?.name?.toLowerCase().includes('escarlate') ||
+      editorRoom?.name?.toLowerCase().includes('salão')
+    );
+
+    const scenarioLoader = new GLTFLoader();
+
+    if (editorRoom?.sceneAssetBlobUrl && !editorRoom.sceneAssetBlobUrl.startsWith('blob:')) {
       defaultArchitectureGroup.visible = false;
-      const scenarioLoader = new GLTFLoader();
       scenarioLoader.load(
         editorRoom.sceneAssetBlobUrl,
         (gltf) => {
@@ -285,18 +310,22 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
         },
         undefined,
         (err) => {
-          console.warn('Could not load custom scenario model:', err);
-          defaultArchitectureGroup.visible = true;
+          console.warn('Could not load custom scenario model, falling back to theme architecture:', err);
+          if (isScarletTheme) {
+            scene.add(createScarletSalonArchitecture());
+          } else if (isLoftTheme) {
+            scene.add(createLoftArchitecture());
+          } else {
+            defaultArchitectureGroup.visible = true;
+          }
         }
       );
-    } else if (editorRoom?.sceneAssetId === 'inv-scene-1') {
+    } else if (isScarletTheme) {
       defaultArchitectureGroup.visible = false;
-      const scarlet = createScarletSalonArchitecture();
-      scene.add(scarlet);
-    } else if (editorRoom?.sceneAssetId === 'inv-scene-2') {
+      scene.add(createScarletSalonArchitecture());
+    } else if (isLoftTheme) {
       defaultArchitectureGroup.visible = false;
-      const loft = createLoftArchitecture();
-      scene.add(loft);
+      scene.add(createLoftArchitecture());
     }
 
     // Spot Meshes: Glowing circles (círculos brilhantes) + discreet blinking down-arrow
@@ -535,6 +564,11 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
       zackGroup.rotation.y = THREE.MathUtils.degToRad(-25);
       scene.add(zackGroup);
     }
+
+    // Remote Players Group (Realtime Multiplayer Avatars)
+    const remoteGroup = new THREE.Group();
+    scene.add(remoteGroup);
+    remotePlayersGroupRef.current = remoteGroup;
 
     // Center Avatar: Player (customized dynamically according to customAvatarObject or activeUserAvatar)
     const playerGroup = new THREE.Group();
@@ -994,6 +1028,86 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
       renderer.dispose();
     };
   }, []);
+
+  // Update Remote Players 3D Meshes & Floating Display Names
+  useEffect(() => {
+    if (!remotePlayersGroupRef.current) return;
+    const group = remotePlayersGroupRef.current;
+
+    // Clear previous remote player models
+    while (group.children.length > 0) {
+      group.remove(group.children[0]);
+    }
+
+    if (remotePlayers && remotePlayers.length > 0) {
+      remotePlayers.forEach((player, idx) => {
+        const spot = spots.find(
+          (s) => s.id === player.spotId || String(s.id) === String(player.spotId)
+        ) || spots[idx % spots.length] || { position: [1.2 * (idx + 1), 0.28, 0], rotation: 0 };
+
+        const posX = spot.position?.[0] ?? (1.2 * (idx + 1));
+        const posY = (spot.position?.[1] ?? 0.02) + 0.26;
+        const posZ = spot.position?.[2] ?? 0;
+        const rotY = THREE.MathUtils.degToRad(spot.rotation || 0);
+
+        const remoteMesh = createCharacterMesh({
+          skinColor: 0xdfb498,
+          hairColor: 0x1f1b18,
+          clothColor: idx % 2 === 0 ? 0x2563eb : 0x10b981, // Blue or Green outfit
+          pantsColor: 0x1e293b,
+          hasGlasses: idx % 2 === 1,
+          hasGoldChain: true,
+          hairStyle: 'curly',
+        });
+
+        remoteMesh.position.set(posX, posY, posZ);
+        remoteMesh.rotation.y = rotY;
+
+        // Create 3D floating canvas name tag above remote player's head
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = 'rgba(15, 17, 23, 0.90)';
+          ctx.beginPath();
+          if (ctx.roundRect) {
+            ctx.roundRect(6, 6, 244, 52, 10);
+          } else {
+            ctx.rect(6, 6, 244, 52);
+          }
+          ctx.fill();
+
+          ctx.strokeStyle = '#ffd700';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          if (ctx.roundRect) {
+            ctx.roundRect(6, 6, 244, 52, 10);
+          } else {
+            ctx.rect(6, 6, 244, 52);
+          }
+          ctx.stroke();
+
+          ctx.font = 'bold 20px sans-serif';
+          ctx.fillStyle = '#ffd700';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(player.displayName || 'Usuário', 128, 32);
+        }
+
+        const texture = new THREE.CanvasTexture(canvas);
+        const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true });
+        const sprite = new THREE.Sprite(spriteMat);
+        sprite.position.set(posX, posY + 1.35, posZ);
+        sprite.scale.set(1.4, 0.35, 1);
+
+        const playerContainer = new THREE.Group();
+        playerContainer.add(remoteMesh);
+        playerContainer.add(sprite);
+        group.add(playerContainer);
+      });
+    }
+  }, [remotePlayers, spots]);
 
   // Update Player transform & Spot position & Pose geometry
   useEffect(() => {
