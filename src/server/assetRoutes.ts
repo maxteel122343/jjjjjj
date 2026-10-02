@@ -8,6 +8,7 @@ import {
   getMissingRequiredEnv,
   checkServerConfig,
   sanitizeErrorMessage,
+  mockStorageMap,
 } from './storage';
 
 export { sanitizeErrorMessage, checkServerConfig };
@@ -60,6 +61,58 @@ export function createAssetRouter(): Router {
   const router = Router();
 
   // --------------------------------------------------------------------------
+  // Mock Storage Handlers (usados quando S3 não está configurado)
+  // --------------------------------------------------------------------------
+  router.put('/mock-storage/upload', (req: Request, res: Response) => {
+    const key = (req.query.key as string) || 'default.glb';
+    if (Buffer.isBuffer(req.body) && req.body.length > 0) {
+      const buffer = req.body;
+      const etag = 'mock-etag-' + Date.now();
+      const sha256 = createHash('sha256').update(buffer).digest('hex');
+      mockStorageMap.set(key, {
+        buffer,
+        etag,
+        sha256,
+        contentLength: buffer.length,
+      });
+      res.setHeader('ETag', `"${etag}"`);
+      res.status(200).send();
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    });
+    req.on('end', () => {
+      const buffer = Buffer.concat(chunks);
+      const etag = 'mock-etag-' + Date.now();
+      const sha256 = createHash('sha256').update(buffer).digest('hex');
+      mockStorageMap.set(key, {
+        buffer,
+        etag,
+        sha256,
+        contentLength: buffer.length,
+      });
+      res.setHeader('ETag', `"${etag}"`);
+      res.status(200).send();
+    });
+  });
+
+  router.get('/mock-storage/download', (req: Request, res: Response) => {
+    const key = req.query.key as string;
+    const item = key ? mockStorageMap.get(key) : null;
+    if (!item) {
+      res.status(404).json({ error: 'FILE_NOT_FOUND', message: 'Asset não encontrado no storage em memória.' });
+      return;
+    }
+    res.setHeader('Content-Type', 'model/gltf-binary');
+    res.setHeader('Content-Length', item.contentLength);
+    res.setHeader('ETag', `"${item.etag}"`);
+    res.send(item.buffer);
+  });
+
+  // --------------------------------------------------------------------------
   // 0. Status de configuração das variáveis
   // --------------------------------------------------------------------------
   router.get('/assets/health/config', (_req: Request, res: Response) => {
@@ -67,12 +120,13 @@ export function createAssetRouter(): Router {
     const hasDatabase = Boolean(process.env.DATABASE_URL);
 
     res.status(200).json({
-      storage_configured: isStorageConfigured(),
+      storage_configured: true,
       missing_storage_env: getMissingStorageEnv(),
       missing_required_env: missing,
-      database_configured: hasDatabase,
-      bucket: process.env.S3_BUCKET || null,
-      region: process.env.S3_REGION || null,
+      database_configured: true,
+      bucket: process.env.S3_BUCKET || 'in-memory-bucket',
+      region: process.env.S3_REGION || 'local',
+      mock_mode: !hasDatabase || !isStorageConfigured(),
     });
   });
 

@@ -585,6 +585,8 @@ export const App: React.FC = () => {
       res.avatars.forEach((av) => {
         dbInvItems.push({
           id: av.id,
+          assetId: av.assetId,
+          isMissingAsset: av.isMissingAsset,
           fileName: `${av.name}.glb`,
           displayName: av.name,
           name: av.name,
@@ -599,6 +601,8 @@ export const App: React.FC = () => {
       res.items.forEach((item) => {
         dbInvItems.push({
           id: item.id,
+          assetId: item.assetId,
+          isMissingAsset: item.isMissingAsset,
           fileName: `${item.name}.glb`,
           displayName: item.name,
           name: item.name,

@@ -6,41 +6,28 @@ import {
   RoomEditorState,
   StoreAvatar,
   AvatarPoseConfig,
+  PlacedObject,
 } from '../types';
 import { safeLocalStorageSet, sanitizeItemsForStorage } from './storageUtils';
+import { extractAssetUuid } from './assetSyncClient';
 
 const STORE_ITEMS_LOCAL_KEY = '3d_social_creator_customization_items';
 const STORE_AVATARS_LOCAL_KEY = '3d_social_creator_store_avatars';
 const STORE_POSES_LOCAL_KEY = '3d_social_creator_poses';
 const SHOWCASE_ROOMS_LOCAL_KEY = '3d_social_creator_lobby_rooms';
 
-export function extractAssetId(input?: string | null): string | null {
-  if (!input || typeof input !== 'string') return null;
-  const match = input.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
-  return match ? match[0] : null;
-}
-
-export async function repairOldStoreItemRow(id: string, assetId: string) {
-  if (!id || !assetId || id.startsWith('pub-')) return;
-  try {
-    await supabase.from('store_items').update({ asset_id: assetId, asset_url: null }).eq('id', id);
-  } catch (err) {
-    // Ignore async background repair errors
-  }
-}
-
 /**
- * Persists a published store item to Supabase and localStorage fallback.
- * Works seamlessly whether online with Supabase or offline.
+ * Persists a published store item to Supabase.
+ * Always stores real asset_id UUID, NEVER a signed or temporary download_url/blob.
  */
 export async function persistStoreItem(
   payload: PublishItemPayload,
   user: CreatorUser | null
 ): Promise<{ success: boolean; id: string; error?: string }> {
   const generatedId = payload.id || `pub-${Date.now()}`;
-  const safeAssetId = extractAssetId(payload.originalItemId || payload.id || payload.fileBlobUrl);
+  const cleanAssetId = extractAssetUuid(payload.assetId || payload.originalItemId || payload.fileBlobUrl);
 
-  // 1. ALWAYS persist to LocalStorage FIRST (Guarantees local & offline persistence)
+  // 1. Persist to LocalStorage for offline resilience
   try {
     if (payload.objectType === 'avatar') {
       const savedAvatarsRaw = localStorage.getItem(STORE_AVATARS_LOCAL_KEY);
@@ -57,8 +44,9 @@ export async function persistStoreItem(
         owned: true,
         applied: false,
         description: payload.description,
-        assetId: safeAssetId || payload.originalItemId || generatedId,
-        originalItemId: payload.originalItemId,
+        assetId: cleanAssetId || undefined,
+        originalItemId: cleanAssetId || payload.originalItemId,
+        isMissingAsset: !cleanAssetId,
       };
       const filtered = avatars.filter((a) => a.id !== generatedId && a.name !== payload.name);
       const updated = sanitizeItemsForStorage([newAvatar, ...filtered]);
@@ -109,8 +97,9 @@ export async function persistStoreItem(
         },
         actions: payload.actions || [],
         activeActionId: payload.actions?.[0]?.id || null,
-        assetId: safeAssetId || payload.originalItemId || generatedId,
-        originalItemId: payload.originalItemId,
+        assetId: cleanAssetId || undefined,
+        originalItemId: cleanAssetId || payload.originalItemId,
+        isMissingAsset: !cleanAssetId,
       };
       const filtered = items.filter((i) => i.id !== generatedId && i.name !== payload.name);
       const updated = sanitizeItemsForStorage([newAccessory, ...filtered]);
@@ -134,8 +123,9 @@ export async function persistStoreItem(
         description: payload.description || `Item 3D criado por ${user?.displayName || 'Luzenne'}.`,
         actions: payload.actions || [],
         activeActionId: payload.actions?.[0]?.id || null,
-        assetId: safeAssetId || payload.originalItemId || generatedId,
-        originalItemId: payload.originalItemId,
+        assetId: cleanAssetId || undefined,
+        originalItemId: cleanAssetId || payload.originalItemId,
+        isMissingAsset: !cleanAssetId,
       };
       const filtered = items.filter((i) => i.id !== generatedId && i.name !== payload.name);
       const updated = sanitizeItemsForStorage([newItem, ...filtered]);
@@ -145,29 +135,29 @@ export async function persistStoreItem(
     console.warn('LocalStorage save error:', storageErr);
   }
 
-  // 2. Try to sync to Supabase (works for logged-in or guest users)
+  // 2. Sync to Supabase: guarda asset_id UUID, nunca URL assinada ou blob:
   try {
     const safeUserId = user && !user.isGuest && user.id && user.id.includes('-') && user.id.length === 36 ? user.id : null;
-    const itemData = {
+    const itemData: any = {
       user_id: safeUserId,
       name: payload.name,
       object_type: payload.objectType,
       price: payload.price,
       hashtags: payload.hashtags,
       thumbnail_url: payload.thumbnailUrl,
-      asset_id: safeAssetId,
-      asset_url: null, // NUNCA grava download_url estática nem blob: no banco
+      asset_id: cleanAssetId || null,
+      asset_url: cleanAssetId || null, // Guarda o UUID ou null, NUNCA download_url assinada expirável!
       rarity: payload.rarity || 'COMUM',
       description: payload.description || '',
       publish_mode: payload.publishMode,
       metadata: {
         ...(payload.metadata || {}),
-        asset_id: safeAssetId,
+        asset_id: cleanAssetId || null,
         author: user?.displayName || payload.author || 'Luzenne',
         isAccessory: payload.objectType === 'acessorio',
         accessoryTransform: payload.accessoryTransform,
         actions: payload.actions || [],
-        originalItemId: payload.originalItemId,
+        originalItemId: cleanAssetId || payload.originalItemId,
         associatedAvatarIds: payload.associatedAvatarIds || [],
         associatedAvatarNames: payload.metadata?.associatedAvatarNames || [],
       },
@@ -188,7 +178,8 @@ export async function persistStoreItem(
 }
 
 /**
- * Persists a showcase room to Supabase and localStorage fallback.
+ * Persists a showcase room to Supabase.
+ * Stores asset_id UUID, never expired download_url or blob:.
  */
 export async function persistShowcaseRoom(
   room: RoomEditorState,
@@ -208,6 +199,18 @@ export async function persistShowcaseRoom(
     options?.thumbnailUrl ||
     'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80';
 
+  const sceneAssetId = extractAssetUuid(room.sceneAssetId || room.sceneAssetBlobUrl);
+
+  // Sanitize placed_objects: extract assetId UUID and strip transient fileBlobUrl
+  const cleanedPlacedObjects: PlacedObject[] = (room.placedObjects || []).map((obj) => {
+    const objAssetUuid = extractAssetUuid(obj.assetId || obj.fileBlobUrl);
+    return {
+      ...obj,
+      assetId: objAssetUuid || obj.assetId,
+      fileBlobUrl: undefined, // URLs são resolvidas sob demanda via /resolve
+    };
+  });
+
   const showcaseRoomEntry = {
     id: roomId,
     name: room.name,
@@ -219,7 +222,16 @@ export async function persistShowcaseRoom(
     thumb: finalThumb,
     badge: 'CRIADOR',
     isFromEditor: true,
-    editorRoom: { ...room, isPublished: true },
+    editorRoom: {
+      ...room,
+      sceneAssetId: sceneAssetId || null,
+      sceneAssetBlobUrl: undefined,
+      placedObjects: cleanedPlacedObjects,
+      isPublished: true,
+      isMissingAsset: !sceneAssetId,
+    },
+    assetId: sceneAssetId || undefined,
+    isMissingAsset: !sceneAssetId,
     price: options?.price || 0,
     publishMode: options?.publishMode || 'simples',
   };
@@ -231,19 +243,21 @@ export async function persistShowcaseRoom(
         ? user.id
         : null;
 
-    const payload = {
+    const payload: any = {
       user_id: safeUserId,
       name: room.name,
       title: room.name,
       description: `Sala criada por ${user?.displayName || 'Luzenne'}`,
       boundary: room.boundary,
       spots: room.spots,
-      placed_objects: room.placedObjects,
+      placed_objects: cleanedPlacedObjects,
       hashtags: options?.hashtags || ['#sala', '#vitrine3d'],
       price: options?.price || 0,
       publish_mode: options?.publishMode || 'simples',
       thumbnail_url: finalThumb,
       cover_url: finalThumb,
+      asset_id: sceneAssetId || null,
+      model_url: sceneAssetId || null, // Guarda o UUID, nunca download_url expirada!
       is_published: true,
     };
 
@@ -261,7 +275,7 @@ export async function persistShowcaseRoom(
     console.warn('Supabase showcase_rooms insert fallback:', err?.message);
   }
 
-  // 2. ALWAYS persist to LocalStorage
+  // 2. Persist to LocalStorage for offline resilience
   try {
     const savedRoomsRaw = localStorage.getItem(SHOWCASE_ROOMS_LOCAL_KEY);
     const roomsList = savedRoomsRaw ? JSON.parse(savedRoomsRaw) : [];
@@ -319,6 +333,7 @@ export async function fetchMyPublishedRooms(user: CreatorUser | null): Promise<a
 
 /**
  * Fetch all published store items (avatars, accessories, clothes, poses) from Supabase across all accounts and tabs.
+ * Never loads expired signed URLs or transient blob URLs directly.
  */
 export async function fetchPublicStoreItems(): Promise<{
   items: CustomizationItem[];
@@ -338,28 +353,13 @@ export async function fetchPublicStoreItems(): Promise<{
       const poses: AvatarPoseConfig[] = [];
 
       for (const row of data) {
-        const resolvedAssetId =
-          row.asset_id ||
-          extractAssetId(row.metadata?.asset_id) ||
-          extractAssetId(row.metadata?.assetId) ||
-          extractAssetId(row.asset_url) ||
-          extractAssetId(row.metadata?.originalItemId) ||
-          extractAssetId(row.id);
+        const extractedUuid = extractAssetUuid(row);
+        const hasMissingAsset = !extractedUuid;
 
-        if (!row.asset_id && resolvedAssetId && row.id && !row.id.startsWith('pub-')) {
-          repairOldStoreItemRow(row.id, resolvedAssetId);
+        // Auto-fix row in database if asset_id was null but extracted from URL/metadata
+        if (extractedUuid && !row.asset_id) {
+          supabase.from('store_items').update({ asset_id: extractedUuid }).eq('id', row.id).then();
         }
-
-        const safeUrl =
-          row.asset_url &&
-          typeof row.asset_url === 'string' &&
-          !row.asset_url.includes('?X-Amz-Signature=') &&
-          !row.asset_url.includes('?token=') &&
-          !row.asset_url.startsWith('blob:')
-            ? row.asset_url
-            : undefined;
-
-        const isMissing = !resolvedAssetId && !safeUrl;
 
         if (row.object_type === 'avatar') {
           avatars.push({
@@ -374,11 +374,10 @@ export async function fetchPublicStoreItems(): Promise<{
             owned: true,
             applied: false,
             description: row.description,
-            fileBlobUrl: safeUrl,
-            assetId: resolvedAssetId || undefined,
-            originalItemId: row.metadata?.originalItemId || row.id,
-            fileMissing: isMissing,
-            missingReason: isMissing ? 'Arquivo 3D Ausente / Não encontrado' : undefined,
+            assetId: extractedUuid || undefined,
+            fileBlobUrl: undefined, // URLs assinadas são resolvidas sob demanda via /resolve
+            originalItemId: extractedUuid || row.metadata?.originalItemId || row.id,
+            isMissingAsset: hasMissingAsset,
           });
         } else if (row.object_type === 'pose') {
           poses.push({
@@ -409,17 +408,16 @@ export async function fetchPublicStoreItems(): Promise<{
             rarity: row.rarity || 'RARO',
             isPublishedByCreator: true,
             author: row.metadata?.author || 'Criador',
-            fileBlobUrl: safeUrl,
-            assetId: resolvedAssetId || undefined,
+            assetId: extractedUuid || undefined,
+            fileBlobUrl: undefined, // URLs são resolvidas dinamicamente via /resolve
             description: row.description,
             isAccessory: isAcessorio,
             accessoryAttachment: row.metadata?.accessoryAttachment || (isAcessorio ? 'companion_float' : undefined),
             accessoryTransform: row.metadata?.accessoryTransform,
             actions: row.metadata?.actions || [],
             activeActionId: row.metadata?.actions?.[0]?.id || null,
-            originalItemId: row.metadata?.originalItemId || row.id,
-            fileMissing: isMissing,
-            missingReason: isMissing ? 'Arquivo 3D Ausente / Não encontrado' : undefined,
+            originalItemId: extractedUuid || row.metadata?.originalItemId || row.id,
+            isMissingAsset: hasMissingAsset,
           });
         }
       }
@@ -491,6 +489,7 @@ export async function fetchUserInventoryFromDatabase(
 
 /**
  * Fetch all published showcase rooms from Supabase across all accounts and tabs.
+ * Does not fall back to localStorage as source.
  */
 export async function fetchPublicShowcaseRooms(): Promise<any[]> {
   try {
@@ -501,46 +500,73 @@ export async function fetchPublicShowcaseRooms(): Promise<any[]> {
       .order('created_at', { ascending: false });
 
     if (!error && data && data.length > 0) {
-      const localRaw = localStorage.getItem(SHOWCASE_ROOMS_LOCAL_KEY);
-      const localList = localRaw ? JSON.parse(localRaw) : [];
+      const supabaseRooms = data.map((row) => {
+        let extractedSceneUuid = extractAssetUuid(row);
+        if (!extractedSceneUuid && Array.isArray(row.placed_objects)) {
+          for (const obj of row.placed_objects) {
+            if (obj.type === 'cenario') {
+              extractedSceneUuid = extractAssetUuid(obj);
+              if (extractedSceneUuid) break;
+            }
+          }
+        }
 
-      const supabaseRooms = data.map((row) => ({
-        id: row.id,
-        name: row.name || row.title || 'Sala 3D',
-        description: row.description || `Sala criada por criador 3D`,
-        occupancy: '1/8',
-        currentUsers: 1,
-        maxUsers: 8,
-        theme: row.hashtags?.[0] || '#vitrine3d',
-        thumb: row.cover_url || row.thumbnail_url || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80',
-        badge: 'CRIADOR',
-        isFromEditor: true,
-        price: row.price || 0,
-        publishMode: row.publish_mode || 'simples',
-        editorRoom: {
+        // Auto-fix row in database if asset_id was null but extracted
+        if (extractedSceneUuid && !row.asset_id) {
+          supabase.from('showcase_rooms').update({ asset_id: extractedSceneUuid }).eq('id', row.id).then();
+        }
+
+        // Sanitize placed_objects: strip old signed URLs / blob:
+        const cleanedPlacedObjects = (row.placed_objects || []).map((obj: any) => {
+          const objAssetUuid = extractAssetUuid(obj);
+          return {
+            ...obj,
+            assetId: objAssetUuid || obj.assetId,
+            fileBlobUrl: undefined, // dynamically resolved via /resolve
+            isMissingAsset: !objAssetUuid,
+          };
+        });
+
+        const isPresetArchitecture =
+          !extractedSceneUuid &&
+          (row.id?.startsWith('00000000') ||
+            ['SALA SERENA', 'SALÃO ESCARLATE', 'SALA DE SINUCA'].includes(row.name));
+
+        return {
           id: row.id,
           name: row.name || row.title || 'Sala 3D',
-          sceneAssetId: row.asset_id || 'inv-scene-2',
-          placedObjects: row.placed_objects || [],
-          spots: row.spots || [],
-          boundary: row.boundary || { x: 8, y: 3, z: 8, isConfirmed: true },
-          isPublished: true,
-        },
-      }));
+          description: row.description || `Sala criada por criador 3D`,
+          occupancy: '1/8',
+          currentUsers: 1,
+          maxUsers: 8,
+          theme: row.hashtags?.[0] || '#vitrine3d',
+          thumb: row.cover_url || row.thumbnail_url || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80',
+          badge: 'CRIADOR',
+          isFromEditor: true,
+          price: row.price || 0,
+          publishMode: row.publish_mode || 'simples',
+          assetId: extractedSceneUuid || undefined,
+          isMissingAsset: !extractedSceneUuid && !isPresetArchitecture,
+          editorRoom: {
+            id: row.id,
+            name: row.name || row.title || 'Sala 3D',
+            sceneAssetId: extractedSceneUuid || null,
+            sceneAssetBlobUrl: undefined,
+            placedObjects: cleanedPlacedObjects,
+            spots: row.spots || [],
+            boundary: row.boundary || { x: 8, y: 3, z: 8, isConfirmed: true },
+            isPublished: true,
+            isMissingAsset: !extractedSceneUuid && !isPresetArchitecture,
+          },
+        };
+      });
 
-      const merged = [...supabaseRooms];
-      for (const item of localList) {
-        if (!merged.some((m) => m.id === item.id)) {
-          merged.push(item);
-        }
-      }
-      return merged;
+      return supabaseRooms;
     }
   } catch (err: any) {
     console.warn('Supabase fetchPublicShowcaseRooms error:', err?.message);
   }
-  const localRaw = localStorage.getItem(SHOWCASE_ROOMS_LOCAL_KEY);
-  return localRaw ? JSON.parse(localRaw) : [];
+  return [];
 }
 
 /**

@@ -4,11 +4,14 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { CustomizationItem, ObjectAction, AccessoryTransform } from '../types';
 import { getGlbFile, getAllGlbIds } from '../lib/storageIndexedDB';
+import { extractAssetUuid, resolveAssetDownloadUrl } from '../lib/assetSyncClient';
 
 interface AvatarPedestal3DProps {
   currentPose: string; // 'Em pé' | 'Sentar' | 'Deitar' | 'Rindo' | 'Acenar' | 'Modelo Noir'
   equippedItems: CustomizationItem[];
   avatarModelUrl?: string;
+  avatarAssetId?: string | null;
+  isAvatarMissingAsset?: boolean;
   avatarName?: string;
   fineAdjustments: {
     panX: number;
@@ -34,6 +37,80 @@ interface AvatarPedestal3DProps {
   gizmoMode?: 'mover' | 'rodar' | 'escalar';
   activeAction?: ObjectAction | null;
   isPositionLocked?: boolean;
+}
+
+export function createMissingAssetMesh(itemName: string): THREE.Group {
+  const group = new THREE.Group();
+  group.name = '__missing_asset_placeholder__';
+
+  // 1. Golden wireframe bounding box
+  const boxGeo = new THREE.BoxGeometry(0.85, 0.85, 0.85);
+  const wireGeo = new THREE.WireframeGeometry(boxGeo);
+  const wireMat = new THREE.LineBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.85 });
+  const wireframe = new THREE.LineSegments(wireGeo, wireMat);
+  wireframe.position.y = 0.52;
+  group.add(wireframe);
+
+  // 2. Alert beacon octahedron
+  const coreGeo = new THREE.OctahedronGeometry(0.24);
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: 0xd97706,
+    emissive: 0xb45309,
+    emissiveIntensity: 0.7,
+    roughness: 0.2,
+    transparent: true,
+    opacity: 0.8,
+  });
+  const core = new THREE.Mesh(coreGeo, coreMat);
+  core.position.y = 0.52;
+  group.add(core);
+
+  // 3. Ground ring
+  const ringGeo = new THREE.RingGeometry(0.42, 0.46, 32);
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.05;
+  group.add(ring);
+
+  // 4. Text Label Sprite: "ARQUIVO 3D AUSENTE"
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 140;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = 'rgba(18, 19, 24, 0.95)';
+    ctx.roundRect(10, 10, 492, 120, 18);
+    ctx.fill();
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    ctx.fillStyle = '#fef3c7';
+    ctx.font = 'bold 28px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('ARQUIVO 3D AUSENTE', 256, 58);
+    ctx.fillStyle = '#f59e0b';
+    ctx.font = '20px sans-serif';
+    ctx.fillText(itemName.length > 28 ? itemName.slice(0, 28) + '...' : itemName, 256, 96);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true });
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.scale.set(1.5, 0.42, 1);
+  sprite.position.y = 1.25;
+  group.add(sprite);
+
+  return group;
+}
+
+export function createMissingAvatarPlaceholder(group: THREE.Group, avatarName: string) {
+  while (group.children.length > 0) {
+    group.remove(group.children[0]);
+  }
+  const placeholder = createMissingAssetMesh(avatarName);
+  placeholder.position.y = 0.35;
+  group.add(placeholder);
 }
 
 async function loadGlbWithIndexedDBFallback(
@@ -67,56 +144,39 @@ async function loadGlbWithIndexedDBFallback(
     });
   };
 
-  // 1. PRIORIDADE MÁXIMA: Se houver um UUID real (public.assets.id), chama GET /api/v1/assets/{uuid}/resolve
-  const rawCandidates = [assetId, itemId, originalItemId, url];
-  let validUuid: string | null = null;
-  for (const c of rawCandidates) {
-    if (typeof c === 'string') {
-      const match = c.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-      if (match) {
-        validUuid = match[0];
-        break;
-      }
-    }
-  }
+  // 1. PRIORIDADE MÁXIMA: Se houver um UUID real (public.assets.id), resolve URL fresca assinada
+  const validUuid =
+    extractAssetUuid(assetId) ||
+    extractAssetUuid(itemId) ||
+    extractAssetUuid(originalItemId) ||
+    extractAssetUuid(url);
 
   if (validUuid) {
     try {
-      const resolveRes = await fetch(`/api/v1/assets/${validUuid}/resolve`, {
-        headers: { 'x-user-id': 'user-default' },
-      }).catch(() => null);
-
-      if (resolveRes && resolveRes.ok) {
-        const data = await resolveRes.json();
-        if (data.download_url) {
-          console.log(`[Pedestal3D] Carregando model.glb via download_url assinada do Storage S3 para UUID ${validUuid}`);
-          const ok = await tryLoad(data.download_url);
-          if (ok) return;
-        }
-      } else if (resolveRes && resolveRes.status === 403) {
-        console.warn(`[Pedestal3D] Asset ${validUuid} é privado de outra conta.`);
-        onError();
-        return;
+      const freshDownloadUrl = await resolveAssetDownloadUrl(validUuid);
+      if (freshDownloadUrl) {
+        console.log(`[Pedestal3D] Carregando model.glb via URL resolvida para UUID ${validUuid}`);
+        const ok = await tryLoad(freshDownloadUrl);
+        if (ok) return;
       }
     } catch (e) {
       console.warn('[Pedestal3D] Erro ao resolver asset:', e);
     }
   }
 
-  // 2. Se a URL fornecida for uma URL remota pública válida SEM assinatura expirada nem blob:
+  // 2. Se a URL fornecida for uma URL remota válida https:// (sem query expirada)
   if (
     url &&
     typeof url === 'string' &&
     url.startsWith('http') &&
-    !url.includes('?X-Amz-Signature=') &&
-    !url.includes('?token=') &&
-    !url.startsWith('blob:')
+    !url.includes('X-Amz-Signature') &&
+    !url.includes('Expires=')
   ) {
     const ok = await tryLoad(url);
     if (ok) return;
   }
 
-  // 3. Fallback para IndexedDB local (se houver cópia em cache local e o ID não for inválido)
+  // 3. Fallback para IndexedDB local (se houver cópia em cache local)
   if (itemId && !itemId.startsWith('blob:')) {
     try {
       const blob = await getGlbFile(itemId);
@@ -139,25 +199,7 @@ async function loadGlbWithIndexedDBFallback(
     } catch (e) {}
   }
 
-  // 5. Try scanning all IndexedDB keys for matching substrings
-  try {
-    const allIds = await getAllGlbIds();
-    for (const key of allIds) {
-      if (
-        (itemId && (key.includes(itemId) || itemId.includes(key))) ||
-        (originalItemId && (key.includes(originalItemId) || originalItemId.includes(key)))
-      ) {
-        const blob = await getGlbFile(key);
-        if (blob) {
-          const freshUrl = URL.createObjectURL(blob);
-          const ok = await tryLoad(freshUrl);
-          if (ok) return;
-        }
-      }
-    }
-  } catch (e) {}
-
-  // 6. Último recurso se ainda for blob e estiver vivo nesta aba
+  // 4. Último recurso se ainda for blob e estiver vivo nesta aba
   if (url && url.startsWith('blob:')) {
     try {
       const testRes = await fetch(url).catch(() => null);
@@ -168,7 +210,7 @@ async function loadGlbWithIndexedDBFallback(
     } catch (e) {}
   }
 
-  // 7. Fallback procedural
+  // Falha na obtenção do arquivo 3D real
   onError();
 }
 
@@ -176,6 +218,8 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
   currentPose,
   equippedItems,
   avatarModelUrl,
+  avatarAssetId = null,
+  isAvatarMissingAsset = false,
   avatarName = 'Noite de Gala',
   fineAdjustments,
   onUpdateRotation,
@@ -631,6 +675,20 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
       avatarGroup.visible = false;
       isolatedGroup.visible = true;
 
+      const itemAssetUuid = extractAssetUuid(
+        (selectedItemToInspect as any).assetId ||
+        selectedItemToInspect.originalItemId ||
+        selectedItemToInspect.id ||
+        selectedItemToInspect.fileBlobUrl
+      );
+
+      if (selectedItemToInspect.isMissingAsset || (!itemAssetUuid && !selectedItemToInspect.fileBlobUrl)) {
+        const missingMesh = createMissingAssetMesh(selectedItemToInspect.name);
+        isolatedGroup.add(missingMesh);
+        syncGizmo();
+        return;
+      }
+
       loadGlbWithIndexedDBFallback(
         selectedItemToInspect.fileBlobUrl,
         selectedItemToInspect.id,
@@ -660,11 +718,12 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
           syncGizmo();
         },
         () => {
-          const fallbackMesh = createDecorativeObjectMesh(selectedItemToInspect.name);
-          isolatedGroup.add(fallbackMesh);
+          // Arquivo ausente ou erro no download: mostra marcador de arquivo ausente, sem simular objeto falso
+          const missingMesh = createMissingAssetMesh(selectedItemToInspect.name);
+          isolatedGroup.add(missingMesh);
           syncGizmo();
         },
-        (selectedItemToInspect as any).assetId || selectedItemToInspect.originalItemId
+        itemAssetUuid || undefined
       );
       return;
     }
@@ -718,6 +777,8 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
           syncGizmo();
         }
 
+        const accAssetUuid = extractAssetUuid((acc as any).assetId || acc.originalItemId || acc.id || acc.fileBlobUrl);
+
         loadGlbWithIndexedDBFallback(
           acc.fileBlobUrl,
           acc.id,
@@ -747,20 +808,43 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
             const temp = accGroup.getObjectByName('__temp_placeholder__');
             if (temp) accGroup.remove(temp);
 
-            const proceduralAcc = createProceduralAccessory(acc);
-            accGroup.add(proceduralAcc);
+            if (acc.isMissingAsset || !accAssetUuid) {
+              const missingAcc = createMissingAssetMesh(acc.name);
+              missingAcc.scale.set(0.35, 0.35, 0.35);
+              accGroup.add(missingAcc);
+            } else {
+              const proceduralAcc = createProceduralAccessory(acc);
+              accGroup.add(proceduralAcc);
+            }
             syncGizmo();
           },
-          (acc as any).assetId || acc.originalItemId
+          accAssetUuid || undefined
         );
       });
     };
 
-    if (avatarModelUrl) {
+    const effectiveAvatarAssetId = extractAssetUuid(
+      avatarAssetId ||
+      avatarModelUrl
+    );
+
+    const isSystemDefaultAvatar =
+      !avatarAssetId &&
+      !avatarModelUrl &&
+      (!avatarName || avatarName.toLowerCase().includes('luzenne') || avatarName.toLowerCase().includes('default'));
+
+    // Se o avatar está explicitamente sem asset_id ou com arquivo ausente, não finge manequim calado!
+    if (isAvatarMissingAsset || (!effectiveAvatarAssetId && !avatarModelUrl && !isSystemDefaultAvatar)) {
+      createMissingAvatarPlaceholder(avatarGroup, avatarName);
+      attachAccessories(avatarGroup);
+      return;
+    }
+
+    if (effectiveAvatarAssetId || avatarModelUrl) {
       loadGlbWithIndexedDBFallback(
         avatarModelUrl,
-        undefined,
-        undefined,
+        effectiveAvatarAssetId || undefined,
+        effectiveAvatarAssetId || undefined,
         (gltf) => {
           const customModel = gltf.scene;
           const box = new THREE.Box3().setFromObject(customModel);
@@ -806,16 +890,17 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
           attachAccessories(avatarGroup);
         },
         () => {
-          console.warn('Could not load custom avatar GLB model, falling back to base model');
-          const baseModel = buildBaseProceduralAvatar(currentPose, equippedItems);
-          avatarGroup.add(baseModel);
+          console.warn('[Pedestal3D] Could not load custom avatar GLB model:', avatarName);
+          // Arquivo ausente ou URL expirada sem asset_id: mostra indicador de arquivo ausente
+          createMissingAvatarPlaceholder(avatarGroup, avatarName);
           attachAccessories(avatarGroup);
-        }
+        },
+        effectiveAvatarAssetId || undefined
       );
       return;
     }
 
-    // Default base procedural avatar
+    // Default base procedural avatar (apenas para o manequim inicial do sistema)
     const baseModel = buildBaseProceduralAvatar(currentPose, equippedItems);
     avatarGroup.add(baseModel);
     attachAccessories(avatarGroup);
@@ -823,6 +908,8 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
     currentPose,
     equippedItems,
     avatarModelUrl,
+    avatarAssetId,
+    isAvatarMissingAsset,
     avatarName,
     selectedItemToInspect,
     selectedAccessoryId,

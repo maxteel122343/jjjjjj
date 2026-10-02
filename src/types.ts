@@ -76,6 +76,7 @@ export interface PlacedObject {
   modelType?: 'sofa' | 'table' | 'chair' | 'plant' | 'house' | 'custom_glb' | 'avatar' | 'acessorio';
   fileBlobUrl?: string;
   rawDimensions?: [number, number, number];
+  isMissingAsset?: boolean;
 }
 
 export interface InventoryItem {
@@ -96,6 +97,7 @@ export interface InventoryItem {
   fileBlobUrl?: string;
   modelType?: 'sofa' | 'table' | 'chair' | 'plant' | 'house' | 'custom_glb' | 'avatar' | 'acessorio';
   rawDimensions?: [number, number, number];
+  isMissingAsset?: boolean;
 }
 
 export interface PlayableBoundary {
@@ -116,6 +118,7 @@ export interface RoomEditorState {
   boundary: PlayableBoundary;
   isPublished: boolean;
   publishedAt?: string;
+  isMissingAsset?: boolean;
 }
 
 export interface CreatorUser {
@@ -213,6 +216,8 @@ export interface RoomData {
   isFromEditor?: boolean;
   editorRoom?: RoomEditorState;
   isPlaytest?: boolean;
+  assetId?: string;
+  isMissingAsset?: boolean;
 }
 
 export interface ChatMessage {
@@ -284,8 +289,7 @@ export interface CustomizationItem {
   isLockedPosition?: boolean;
   actions?: ObjectAction[];
   activeActionId?: string | null;
-  fileMissing?: boolean;
-  missingReason?: string;
+  isMissingAsset?: boolean;
 }
 
 export interface StoreAvatar {
@@ -303,8 +307,7 @@ export interface StoreAvatar {
   isUserPublished?: boolean;
   fileBlobUrl?: string;
   originalItemId?: string;
-  fileMissing?: boolean;
-  missingReason?: string;
+  isMissingAsset?: boolean;
 }
 
 export interface AvatarPoseConfig {
@@ -338,6 +341,7 @@ export type StoreObjectType = 'avatar' | 'acessorio' | 'item' | 'pose' | 'sala' 
 
 export interface PublishItemPayload {
   id?: string;
+  assetId?: string;
   originalItemId?: string;
   name: string;
   objectType: StoreObjectType;

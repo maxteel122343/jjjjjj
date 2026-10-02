@@ -868,8 +868,6 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
         id: selectedItemToInspect.id,
         name: selectedItemToInspect.name,
         fileBlobUrl: selectedItemToInspect.fileBlobUrl,
-        assetId: selectedItemToInspect.assetId || (selectedItemToInspect as any).asset_id || selectedItemToInspect.originalItemId,
-        originalItemId: selectedItemToInspect.originalItemId,
         thumb: selectedItemToInspect.thumb,
         price: selectedItemToInspect.price || 0,
         rarity: (selectedItemToInspect.rarity || 'RARO') as 'COMUM' | 'RARO' | 'ÉLITE',
@@ -877,13 +875,19 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
         author: selectedItemToInspect.author,
         owned: selectedItemToInspect.owned,
         applied: false,
+        assetId: (selectedItemToInspect as any).assetId || selectedItemToInspect.originalItemId,
+        originalItemId: (selectedItemToInspect as any).assetId || selectedItemToInspect.originalItemId,
+        isMissingAsset: selectedItemToInspect.isMissingAsset,
       }
-    : currentStoreAvatar || (currentCustomAvatar ? {
+    : (currentStoreAvatar ? {
+        ...currentStoreAvatar,
+        assetId: currentStoreAvatar.assetId || (currentStoreAvatar as any).originalItemId,
+        originalItemId: currentStoreAvatar.originalItemId || currentStoreAvatar.assetId,
+        isMissingAsset: currentStoreAvatar.isMissingAsset,
+      } : (currentCustomAvatar ? {
         id: currentCustomAvatar.id,
         name: currentCustomAvatar.name,
         fileBlobUrl: currentCustomAvatar.fileBlobUrl,
-        assetId: currentCustomAvatar.assetId || (currentCustomAvatar as any).asset_id || currentCustomAvatar.originalItemId,
-        originalItemId: currentCustomAvatar.originalItemId,
         thumb: currentCustomAvatar.thumb,
         price: currentCustomAvatar.price || 0,
         rarity: (currentCustomAvatar.rarity || 'RARO') as 'COMUM' | 'RARO' | 'ÉLITE',
@@ -891,6 +895,9 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
         author: currentCustomAvatar.author,
         owned: currentCustomAvatar.owned,
         applied: false,
+        assetId: (currentCustomAvatar as any).assetId || currentCustomAvatar.originalItemId,
+        originalItemId: (currentCustomAvatar as any).assetId || currentCustomAvatar.originalItemId,
+        isMissingAsset: currentCustomAvatar.isMissingAsset,
       } : storeAvatars[0] || {
         id: 'av-default',
         name: 'Avatar Luzenne',
@@ -900,7 +907,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
         tags: [],
         owned: true,
         applied: true,
-      });
+      }));
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#0a0b0e] text-[#e8d5b5] font-sans flex flex-col select-none">
@@ -2282,6 +2289,8 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
               equippedItems={equippedItems}
               avatarName={currentAvatar.name}
               avatarModelUrl={currentAvatar.fileBlobUrl}
+              avatarAssetId={currentAvatar.assetId || (currentAvatar as any).originalItemId}
+              isAvatarMissingAsset={currentAvatar.isMissingAsset}
               fineAdjustments={fineAdjustments}
               onUpdateRotation={(rotY) =>
                 setFineAdjustments((prev) => ({ ...prev, rotationY: rotY }))

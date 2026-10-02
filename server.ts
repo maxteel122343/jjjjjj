@@ -12,10 +12,11 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const port = 3000;
+  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
   const isProduction = process.env.NODE_ENV === 'production';
 
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.raw({ type: ['model/gltf-binary', 'application/octet-stream'], limit: '100mb' }));
 
   // Restrição de CORS baseada na origem do aplicativo
   app.use((req, res, next) => {

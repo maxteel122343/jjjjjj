@@ -266,3 +266,155 @@ export async function fetchRemoteInventory(
   const data = await res.json();
   return data.items || [];
 }
+
+/**
+ * Extrai um UUID válido v4 de strings, objetos, chaves do bucket ou URLs antigas.
+ * Identifica chaves de bucket como:
+ * - models/users/<userId>/assets/<UUID>/model.glb
+ * - /assets/<UUID>/...
+ * - models/<UUID>/... ou models/<UUID>.glb
+ * - URL assinada antiga: https://.../assets/<UUID>/model.glb?X-Amz-... ou ?token=...
+ * Ignora URLs de blob: de browser (que não existem no storage permanente).
+ */
+export function extractAssetUuid(source: any): string | null {
+  if (!source) return null;
+
+  // 1. Se for string simples
+  if (typeof source === 'string') {
+    const trimmed = source.trim();
+
+    // URLs de blob: de browser nunca são UUIDs de storage válidos
+    if (trimmed.startsWith('blob:')) {
+      return null;
+    }
+
+    // Se for exatamente um UUID v4
+    const exactMatch = trimmed.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    if (exactMatch) {
+      return exactMatch[0].toLowerCase();
+    }
+
+    // Isola o path removendo query parameters (?token=... ou ?X-Amz-...)
+    const pathOnly = trimmed.split('?')[0];
+
+    // Procura padrão explícito /assets/<UUID>/ ou /assets/<UUID>
+    const assetPathMatch = pathOnly.match(/\/assets\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+    if (assetPathMatch && assetPathMatch[1]) {
+      return assetPathMatch[1].toLowerCase();
+    }
+
+    // Procura chave do bucket models (ex: models/users/<userId>/.../<UUID> ou models/<UUID>)
+    const allUuids = Array.from(
+      pathOnly.matchAll(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi)
+    ).map((m) => m[1].toLowerCase());
+
+    if (allUuids.length > 0) {
+      // Se houver mais de um UUID (ex: users/<userUuid>/.../<assetUuid>/model.glb),
+      // o assetId é sempre o último UUID no path (mais próximo ao arquivo .glb)
+      return allUuids[allUuids.length - 1];
+    }
+
+    return null;
+  }
+
+  // 2. Se for objeto com propriedades (ex: row do Supabase ou CustomizationItem)
+  if (typeof source === 'object') {
+    // Ordem de prioridade estrita: campo direto asset_id / assetId primeiro
+    const directCandidates = [
+      source.asset_id,
+      source.assetId,
+      source.metadata?.asset_id,
+      source.metadata?.assetId,
+    ];
+
+    for (const c of directCandidates) {
+      if (c && typeof c === 'string') {
+        const extracted = extractAssetUuid(c);
+        if (extracted) return extracted;
+      }
+    }
+
+    // Candidatos secundários (URLs antigas ou chaves de bucket)
+    const secondaryCandidates = [
+      source.metadata?.originalItemId,
+      source.originalItemId,
+      source.model_url,
+      source.asset_url,
+      source.fileBlobUrl,
+    ];
+
+    for (const c of secondaryCandidates) {
+      if (c && typeof c === 'string') {
+        // Ignora blob:
+        if (c.startsWith('blob:')) continue;
+        const extracted = extractAssetUuid(c);
+        if (extracted) return extracted;
+      }
+    }
+  }
+
+  return null;
+}
+
+// In-memory cache de URLs resolvidas com TTL (evita chamadas repetidas enquanto a assinatura é válida)
+const resolvedUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
+/**
+ * Resolve sob demanda uma URL pré-assinada fresca para download do GLB diretamente do S3/Storage.
+ * Chamado dinamicamente ao equipar, inspecionar, carregar pedestal ou entrar em sala.
+ */
+export async function resolveAssetDownloadUrl(
+  assetIdOrSource: any,
+  roomId?: string
+): Promise<string | null> {
+  const uuid = extractAssetUuid(assetIdOrSource);
+  if (!uuid) return null;
+
+  const cacheKey = roomId ? `${uuid}_${roomId}` : uuid;
+  const cached = resolvedUrlCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.url;
+  }
+
+  try {
+    const endpoint = roomId
+      ? `/api/v1/assets/${uuid}/resolve?room_id=${encodeURIComponent(roomId)}`
+      : `/api/v1/assets/${uuid}/resolve`;
+
+    const authHeaders: Record<string, string> = {
+      'x-user-id': 'user-default',
+    };
+
+    // Resgata sessão salva se houver
+    try {
+      const savedUser = localStorage.getItem('3d_social_creator_user');
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        if (parsed?.id) authHeaders['x-user-id'] = parsed.id;
+      }
+    } catch {}
+
+    const res = await fetch(endpoint, {
+      headers: authHeaders,
+    });
+
+    if (!res.ok) {
+      console.warn(`[resolveAssetDownloadUrl] Falha ao resolver asset ${uuid}: HTTP ${res.status}`);
+      return null;
+    }
+
+    const data = await res.json();
+    if (data.download_url) {
+      // Guarda em cache por 8 minutos (a assinatura expira em 10-15 minutos)
+      resolvedUrlCache.set(cacheKey, {
+        url: data.download_url,
+        expiresAt: Date.now() + 8 * 60 * 1000,
+      });
+      return data.download_url;
+    }
+  } catch (err) {
+    console.warn(`[resolveAssetDownloadUrl] Erro de rede ao resolver ${uuid}:`, err);
+  }
+
+  return null;
+}

@@ -13,7 +13,12 @@ import {
   PlacedObject,
   AccessoryTransform,
 } from '../types';
-import { extractAssetId } from '../lib/database';
+import {
+  createScarletSalonArchitecture,
+  createLoftArchitecture,
+} from '../lib/roomArchitectures';
+import { extractAssetUuid, resolveAssetDownloadUrl } from '../lib/assetSyncClient';
+import { createMissingAssetMesh, createMissingAvatarPlaceholder } from './AvatarPedestal3D';
 
 interface LoungeCanvas3DProps {
   currentPose: AvatarPose;
@@ -245,50 +250,78 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
     defaultArchitectureGroup.add(rug);
 
     // If editorRoom has a custom 3D scenario uploaded/set, load it and hide default walls!
-    if (editorRoom?.sceneAssetBlobUrl) {
+    const sceneAssetUuid = extractAssetUuid(
+      editorRoom?.sceneAssetId ||
+      (editorRoom as any)?.assetId ||
+      editorRoom?.sceneAssetBlobUrl
+    );
+
+    if (sceneAssetUuid || (editorRoom?.sceneAssetBlobUrl && !editorRoom.sceneAssetBlobUrl.startsWith('blob:'))) {
       defaultArchitectureGroup.visible = false;
       const scenarioLoader = new GLTFLoader();
-      scenarioLoader.load(
-        editorRoom.sceneAssetBlobUrl,
-        (gltf) => {
-          const model = gltf.scene;
-          const box = new THREE.Box3().setFromObject(model);
-          const size = box.getSize(new THREE.Vector3());
-          const rawHeight = Math.max(0.01, size.y);
-          const targetCeiling = editorRoom.boundary?.y || 2.80;
-          const scale = targetCeiling / rawHeight;
-          model.scale.set(scale, scale, scale);
 
-          const scaledBox = new THREE.Box3().setFromObject(model);
-          const center = scaledBox.getCenter(new THREE.Vector3());
-          model.position.x = -center.x;
-          model.position.z = -center.z;
-          scaledBox.setFromObject(model);
-          model.position.y = -scaledBox.min.y;
+      const loadScenarioGlb = (loadUrl: string) => {
+        scenarioLoader.load(
+          loadUrl,
+          (gltf) => {
+            const model = gltf.scene;
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            const rawHeight = Math.max(0.01, size.y);
+            const targetCeiling = editorRoom?.boundary?.y || 2.80;
+            const scale = targetCeiling / rawHeight;
+            model.scale.set(scale, scale, scale);
 
-          model.traverse((node) => {
-            if ((node as THREE.Mesh).isMesh) {
-              node.castShadow = true;
-              node.receiveShadow = true;
-              const mat = (node as THREE.Mesh).material;
-              if (mat) {
-                if (Array.isArray(mat)) {
-                  mat.forEach((m) => (m.side = THREE.DoubleSide));
-                } else {
-                  mat.side = THREE.DoubleSide;
+            const scaledBox = new THREE.Box3().setFromObject(model);
+            const center = scaledBox.getCenter(new THREE.Vector3());
+            model.position.x = -center.x;
+            model.position.z = -center.z;
+            scaledBox.setFromObject(model);
+            model.position.y = -scaledBox.min.y;
+
+            model.traverse((node) => {
+              if ((node as THREE.Mesh).isMesh) {
+                node.castShadow = true;
+                node.receiveShadow = true;
+                const mat = (node as THREE.Mesh).material;
+                if (mat) {
+                  if (Array.isArray(mat)) {
+                    mat.forEach((m) => (m.side = THREE.DoubleSide));
+                  } else {
+                    mat.side = THREE.DoubleSide;
+                  }
                 }
               }
-            }
-          });
+            });
 
-          scene.add(model);
-        },
-        undefined,
-        (err) => {
-          console.warn('Could not load custom scenario model:', err);
-          defaultArchitectureGroup.visible = true;
-        }
-      );
+            scene.add(model);
+          },
+          undefined,
+          (err) => {
+            console.warn('[LoungeCanvas3D] Could not load custom scenario GLB:', err);
+            defaultArchitectureGroup.visible = true;
+            const missingMarker = createMissingAssetMesh(editorRoom?.name || 'Cenário 3D');
+            missingMarker.position.set(0, 1.2, 0);
+            scene.add(missingMarker);
+          }
+        );
+      };
+
+      if (sceneAssetUuid) {
+        resolveAssetDownloadUrl(sceneAssetUuid, editorRoom?.id).then((freshUrl) => {
+          if (freshUrl) {
+            loadScenarioGlb(freshUrl);
+          } else {
+            console.warn('[LoungeCanvas3D] Falha ao resolver asset_id do cenário:', sceneAssetUuid);
+            defaultArchitectureGroup.visible = true;
+            const missingMarker = createMissingAssetMesh(editorRoom?.name || 'Cenário 3D');
+            missingMarker.position.set(0, 1.2, 0);
+            scene.add(missingMarker);
+          }
+        });
+      } else if (editorRoom?.sceneAssetBlobUrl) {
+        loadScenarioGlb(editorRoom.sceneAssetBlobUrl);
+      }
     } else if (editorRoom?.sceneAssetId === 'inv-scene-1') {
       defaultArchitectureGroup.visible = false;
       const scarlet = createScarletSalonArchitecture();
@@ -297,6 +330,11 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
       defaultArchitectureGroup.visible = false;
       const loft = createLoftArchitecture();
       scene.add(loft);
+    } else if (editorRoom?.isMissingAsset) {
+      // Cenário com asset_id ausente: marca claramente como arquivo ausente em vez de carregar calado
+      const missingMarker = createMissingAssetMesh(editorRoom.name || 'Cenário 3D');
+      missingMarker.position.set(0, 1.2, 0);
+      scene.add(missingMarker);
     }
 
     // Spot Meshes: Glowing circles (círculos brilhantes) + discreet blinking down-arrow
@@ -452,10 +490,55 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
         objGroup.rotation.set(obj.rotation[0], obj.rotation[1], obj.rotation[2]);
         objGroup.scale.set(obj.scale[0], obj.scale[1], obj.scale[2]);
 
-        const objUuid = extractAssetId(obj.assetId || (obj as any).asset_id || (obj as any).originalItemId || obj.fileBlobUrl);
+        const objAssetUuid = extractAssetUuid(obj.assetId || (obj as any).originalItemId || obj.fileBlobUrl);
 
-        const tryLoadObjGlb = (urlToLoad: string) => {
-          gltfLoader.load(urlToLoad, (gltf) => {
+        if (obj.isMissingAsset || (!objAssetUuid && !obj.fileBlobUrl && obj.type !== 'avatar' && !obj.isAvatar)) {
+          const missingMesh = createMissingAssetMesh(obj.name);
+          missingMesh.scale.set(0.65, 0.65, 0.65);
+          objGroup.add(missingMesh);
+        } else if (objAssetUuid) {
+          resolveAssetDownloadUrl(objAssetUuid, editorRoom?.id).then((freshUrl) => {
+            if (freshUrl) {
+              gltfLoader.load(
+                freshUrl,
+                (gltf) => {
+                  const m = gltf.scene;
+                  const rawBox = new THREE.Box3().setFromObject(m);
+                  const center = rawBox.getCenter(new THREE.Vector3());
+                  m.position.x = -center.x;
+                  m.position.z = -center.z;
+                  m.position.y = -rawBox.min.y;
+                  m.traverse((child) => {
+                    if ((child as THREE.Mesh).isMesh) {
+                      child.castShadow = true;
+                      child.receiveShadow = true;
+                      const mat = (child as THREE.Mesh).material;
+                      if (mat) {
+                        if (Array.isArray(mat)) {
+                          mat.forEach((x) => (x.side = THREE.DoubleSide));
+                        } else {
+                          mat.side = THREE.DoubleSide;
+                        }
+                      }
+                    }
+                  });
+                  objGroup.add(m);
+                },
+                undefined,
+                () => {
+                  const missingMesh = createMissingAssetMesh(obj.name);
+                  missingMesh.scale.set(0.65, 0.65, 0.65);
+                  objGroup.add(missingMesh);
+                }
+              );
+            } else {
+              const missingMesh = createMissingAssetMesh(obj.name);
+              missingMesh.scale.set(0.65, 0.65, 0.65);
+              objGroup.add(missingMesh);
+            }
+          });
+        } else if (obj.fileBlobUrl) {
+          gltfLoader.load(obj.fileBlobUrl, (gltf) => {
             const m = gltf.scene;
             const rawBox = new THREE.Box3().setFromObject(m);
             const center = rawBox.getCenter(new THREE.Vector3());
@@ -478,27 +561,6 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
             });
             objGroup.add(m);
           });
-        };
-
-        if (objUuid) {
-          fetch(`/api/v1/assets/${objUuid}/resolve`, {
-            headers: { 'x-user-id': 'user-default' },
-          })
-            .then((r) => (r.ok ? r.json() : null))
-            .then((data) => {
-              if (data?.download_url) {
-                tryLoadObjGlb(data.download_url);
-              } else if (obj.fileBlobUrl && !obj.fileBlobUrl.includes('?X-Amz-Signature=') && !obj.fileBlobUrl.startsWith('blob:')) {
-                tryLoadObjGlb(obj.fileBlobUrl);
-              }
-            })
-            .catch(() => {
-              if (obj.fileBlobUrl && !obj.fileBlobUrl.includes('?X-Amz-Signature=') && !obj.fileBlobUrl.startsWith('blob:')) {
-                tryLoadObjGlb(obj.fileBlobUrl);
-              }
-            });
-        } else if (obj.fileBlobUrl && !obj.fileBlobUrl.includes('?X-Amz-Signature=') && !obj.fileBlobUrl.startsWith('blob:')) {
-          tryLoadObjGlb(obj.fileBlobUrl);
         } else if (
           obj.type === 'avatar' ||
           obj.isAvatar ||
@@ -516,7 +578,7 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
           avatarMesh.position.y = 0.28;
           objGroup.add(avatarMesh);
         } else {
-          // Stylish furniture mesh
+          // Móvel estilizado padrão para itens genéricos sem modelo
           const sofaGeo = new THREE.BoxGeometry(1.8, 0.5, 0.8);
           const sofaMat = new THREE.MeshStandardMaterial({ color: 0x22242a, roughness: 0.8 });
           const sofaMesh = new THREE.Mesh(sofaGeo, sofaMat);
@@ -1236,19 +1298,29 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
       }
     };
 
-    const avatarUuid = extractAssetId(
+    const customAvatarUuid = extractAssetUuid(
       customAvatarObject?.assetId ||
-      (customAvatarObject as any)?.asset_id ||
-      customAvatarObject?.fileBlobUrl ||
+      (customAvatarObject as any)?.originalItemId ||
+      customAvatarObject?.fileBlobUrl
+    );
+
+    const avatarUuid = extractAssetUuid(
       activeUserAvatar?.assetId ||
-      (activeUserAvatar as any)?.asset_id ||
+      (activeUserAvatar as any)?.originalItemId ||
       activeUserAvatar?.fileBlobUrl
     );
 
-    const tryLoadPlayerGlb = (modelUrl: string) => {
+    const isSystemDefault =
+      !avatarUuid &&
+      !activeUserAvatar?.fileBlobUrl &&
+      (!activeUserAvatar?.name ||
+        activeUserAvatar.name.toLowerCase().includes('luzenne') ||
+        activeUserAvatar.id === 'av-default');
+
+    const renderGlbAvatar = (loadUrl: string, targetName: string) => {
       const gltfLoader = new GLTFLoader();
       gltfLoader.load(
-        modelUrl,
+        loadUrl,
         (gltf) => {
           const m = gltf.scene;
           const box = new THREE.Box3().setFromObject(m);
@@ -1272,14 +1344,42 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
           playerGroup.add(m);
         },
         undefined,
-        (err) => {
-          console.warn('[LoungeCanvas3D] Player GLB load error, fallback to character mesh:', err);
-          renderDefaultCharacterMesh();
+        () => {
+          console.warn('[LoungeCanvas3D] Falha ao carregar modelo GLB do avatar:', targetName);
+          createMissingAvatarPlaceholder(playerGroup, targetName);
         }
       );
     };
 
-    const renderDefaultCharacterMesh = () => {
+    if (customAvatarUuid) {
+      resolveAssetDownloadUrl(customAvatarUuid).then((freshUrl) => {
+        if (freshUrl) {
+          renderGlbAvatar(freshUrl, customAvatarObject?.name || 'Avatar');
+        } else if (customAvatarObject?.fileBlobUrl && !customAvatarObject.fileBlobUrl.startsWith('blob:')) {
+          renderGlbAvatar(customAvatarObject.fileBlobUrl, customAvatarObject?.name || 'Avatar');
+        } else {
+          createMissingAvatarPlaceholder(playerGroup, customAvatarObject?.name || 'Avatar');
+        }
+      });
+    } else if (customAvatarObject?.fileBlobUrl) {
+      renderGlbAvatar(customAvatarObject.fileBlobUrl, customAvatarObject?.name || 'Avatar');
+    } else if (activeUserAvatar?.isMissingAsset || (!avatarUuid && !activeUserAvatar?.fileBlobUrl && !isSystemDefault)) {
+      // Avatar personalizado com asset_id ausente: exibe marcador de arquivo ausente!
+      createMissingAvatarPlaceholder(playerGroup, activeUserAvatar?.name || 'Avatar 3D');
+    } else if (avatarUuid) {
+      resolveAssetDownloadUrl(avatarUuid).then((freshUrl) => {
+        if (freshUrl) {
+          renderGlbAvatar(freshUrl, activeUserAvatar?.name || 'Avatar 3D');
+        } else if (activeUserAvatar?.fileBlobUrl && !activeUserAvatar.fileBlobUrl.startsWith('blob:')) {
+          renderGlbAvatar(activeUserAvatar.fileBlobUrl, activeUserAvatar?.name || 'Avatar 3D');
+        } else {
+          console.warn('[LoungeCanvas3D] Falha ao resolver URL do avatar:', avatarUuid);
+          createMissingAvatarPlaceholder(playerGroup, activeUserAvatar?.name || 'Avatar 3D');
+        }
+      });
+    } else if (activeUserAvatar?.fileBlobUrl) {
+      renderGlbAvatar(activeUserAvatar.fileBlobUrl, activeUserAvatar.name);
+    } else {
       const isCyber =
         activeUserAvatar?.name?.toLowerCase().includes('cyber') ||
         activeUserAvatar?.tags?.includes('#streetwear');
@@ -1299,36 +1399,6 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
         currentPose: currentPose?.name || 'Em pé',
       });
       playerGroup.add(defaultPlayerMesh);
-    };
-
-    const directUrl =
-      customAvatarObject?.fileBlobUrl || activeUserAvatar?.fileBlobUrl;
-
-    if (avatarUuid) {
-      fetch(`/api/v1/assets/${avatarUuid}/resolve`, {
-        headers: { 'x-user-id': 'user-default' },
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (data?.download_url) {
-            tryLoadPlayerGlb(data.download_url);
-          } else if (directUrl && !directUrl.includes('?X-Amz-Signature=') && !directUrl.startsWith('blob:')) {
-            tryLoadPlayerGlb(directUrl);
-          } else {
-            renderDefaultCharacterMesh();
-          }
-        })
-        .catch(() => {
-          if (directUrl && !directUrl.includes('?X-Amz-Signature=') && !directUrl.startsWith('blob:')) {
-            tryLoadPlayerGlb(directUrl);
-          } else {
-            renderDefaultCharacterMesh();
-          }
-        });
-    } else if (directUrl && !directUrl.includes('?X-Amz-Signature=') && !directUrl.startsWith('blob:')) {
-      tryLoadPlayerGlb(directUrl);
-    } else {
-      renderDefaultCharacterMesh();
     }
 
     // Attach equipped accessories with their saved transforms to the player avatar
