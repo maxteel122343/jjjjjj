@@ -221,6 +221,13 @@ export const App: React.FC = () => {
   const [publishingItem, setPublishingItem] = useState<InventoryItem | null>(null);
   const [statusToast, setStatusToast] = useState<string | null>(null);
 
+  const showToast = (message: string) => {
+    setStatusToast(message);
+    setTimeout(() => {
+      setStatusToast(null);
+    }, 3200);
+  };
+
   // Spot Visualization Config State (white pulse, yellow, arrow only, sizes)
   const [spotVisualConfig, setSpotVisualConfig] = useState<SpotVisualConfig>(() => {
     const saved = localStorage.getItem('3d_social_spot_visual_config');
@@ -683,12 +690,7 @@ export const App: React.FC = () => {
     });
   }, []);
 
-  const showToast = (message: string) => {
-    setStatusToast(message);
-    setTimeout(() => {
-      setStatusToast(null);
-    }, 3200);
-  };
+
 
   // Customization & Shop Handlers (matching user request)
   const handleToggleEquipItem = (itemId: string) => {
