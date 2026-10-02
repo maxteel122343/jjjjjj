@@ -34,6 +34,7 @@ interface LoungeCanvas3DProps {
   gizmoMode?: GizmoMode;
   onChangeTransform?: (newTransform: AvatarTransform) => void;
   spotVisualConfig?: SpotVisualConfig;
+  remotePlayers?: any[];
 }
 
 export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
@@ -52,9 +53,11 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
   gizmoMode = 'mover',
   onChangeTransform,
   spotVisualConfig,
+  remotePlayers,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const playerGroupRef = useRef<THREE.Group | null>(null);
+  const remotePlayersGroupRef = useRef<THREE.Group | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -994,6 +997,117 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
       renderer.dispose();
     };
   }, []);
+
+  // Update Remote Players 3D Meshes & Floating Display Names
+  useEffect(() => {
+    if (!remotePlayersGroupRef.current) return;
+    const group = remotePlayersGroupRef.current;
+
+    while (group.children.length > 0) {
+      group.remove(group.children[0]);
+    }
+
+    if (remotePlayers && remotePlayers.length > 0) {
+      remotePlayers.forEach((player, idx) => {
+        const spot = spots.find(
+          (s) => s.id === player.spotId || String(s.id) === String(player.spotId)
+        ) || spots[idx % spots.length] || { position: [1.2 * (idx + 1), 0.02, 0], rotation: 0, type: 'pe' };
+
+        const posX = spot.position?.[0] ?? (1.2 * (idx + 1));
+        const posY = (spot.position?.[1] ?? 0.02) + 0.26;
+        const posZ = spot.position?.[2] ?? 0;
+        const rotY = THREE.MathUtils.degToRad(spot.rotation || 0);
+
+        const poseGlbKey = player.pose?.glbKey || 'stand';
+        const isSeated = poseGlbKey.includes('sit') || (spot as any).type === 'sentar';
+
+        const avatarGlbUrl = player.avatar?.fileBlobUrl || player.avatar?.asset_url;
+        const playerContainer = new THREE.Group();
+        playerContainer.position.set(posX, posY, posZ);
+        playerContainer.rotation.y = rotY;
+
+        // Create 3D floating canvas name tag above remote player's head
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = 'rgba(15, 17, 23, 0.90)';
+          ctx.beginPath();
+          if (ctx.roundRect) {
+            ctx.roundRect(6, 6, 244, 52, 10);
+          } else {
+            ctx.rect(6, 6, 244, 52);
+          }
+          ctx.fill();
+
+          ctx.strokeStyle = '#ffd700';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          if (ctx.roundRect) {
+            ctx.roundRect(6, 6, 244, 52, 10);
+          } else {
+            ctx.rect(6, 6, 244, 52);
+          }
+          ctx.stroke();
+
+          ctx.font = 'bold 20px sans-serif';
+          ctx.fillStyle = '#ffd700';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(player.displayName || 'Usuário', 128, 32);
+        }
+
+        const texture = new THREE.CanvasTexture(canvas);
+        const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true });
+        const sprite = new THREE.Sprite(spriteMat);
+        sprite.position.set(0, 1.35, 0);
+        sprite.scale.set(1.4, 0.35, 1);
+        playerContainer.add(sprite);
+
+        const remoteMesh = createCharacterMesh({
+          skinColor: idx % 3 === 0 ? 0xdfb498 : idx % 3 === 1 ? 0x8d5524 : 0xf1c27d,
+          hairColor: idx % 2 === 0 ? 0x1f1b18 : 0x4a2c11,
+          clothColor: idx % 3 === 0 ? 0x2563eb : idx % 3 === 1 ? 0x10b981 : 0xd97706,
+          pantsColor: 0x1e293b,
+          hasGlasses: idx % 2 === 1,
+          hasGoldChain: true,
+          hairStyle: idx % 2 === 0 ? 'curly' : 'afro-short',
+          currentPose: isSeated ? 'sentado' : 'stand',
+        });
+        playerContainer.add(remoteMesh);
+
+        if (avatarGlbUrl && (avatarGlbUrl.startsWith('http') || avatarGlbUrl.startsWith('blob'))) {
+          const loader = new GLTFLoader();
+          loader.load(
+            avatarGlbUrl,
+            (gltf) => {
+              const glbModel = gltf.scene;
+              const box = new THREE.Box3().setFromObject(glbModel);
+              const size = box.getSize(new THREE.Vector3());
+              const targetHeight = isSeated ? 1.0 : 1.6;
+              const scale = size.y > 0 ? targetHeight / size.y : 1;
+              glbModel.scale.set(scale, scale, scale);
+
+              const center = box.getCenter(new THREE.Vector3());
+              glbModel.position.x = -center.x * scale;
+              glbModel.position.z = -center.z * scale;
+              glbModel.position.y = -box.min.y * scale;
+
+              remoteMesh.visible = false;
+              playerContainer.add(glbModel);
+            },
+            undefined,
+            (err) => {
+              console.warn('Could not load remote player GLB model, using character mesh:', err);
+            }
+          );
+        }
+
+        group.add(playerContainer);
+      });
+    }
+  }, [remotePlayers, spots]);
 
   // Update Player transform & Spot position & Pose geometry
   useEffect(() => {

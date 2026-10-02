@@ -23,6 +23,7 @@ import { GlassChat } from './GlassChat';
 import { SpeechBubbleOverlay } from './SpeechBubbleOverlay';
 import { RoomAccessBar } from './RoomAccessBar';
 import { safeLocalStorageSet } from '../lib/storageUtils';
+import { supabase } from '../lib/supabase';
 
 interface RoomViewProps {
   room: RoomData;
@@ -61,6 +62,9 @@ export const RoomView: React.FC<RoomViewProps> = ({
       setLiveAvatar(activeUserAvatar);
     }
   }, [activeUserAvatar]);
+
+  const [remotePlayers, setRemotePlayers] = useState<any[]>([]);
+  const roomChannelRef = React.useRef<any>(null);
 
   // Gizmo & Transform State (Mover -> Escala -> Rotação)
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>('mover');
@@ -243,9 +247,10 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
   // Send message from chat
   const handleSendMessage = (text: string) => {
+    const senderName = user?.displayName || 'Você';
     const newMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
-      user: 'Você (Luzenne)',
+      user: `${senderName}`,
       avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
       text,
       time: 'agora',
@@ -255,18 +260,121 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
     setChatMessages((prev) => [...prev, newMsg]);
 
+    if (roomChannelRef.current) {
+      roomChannelRef.current.send({
+        type: 'broadcast',
+        event: 'chat',
+        payload: {
+          id: `msg-${Date.now()}`,
+          user: senderName,
+          avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
+          text,
+          time: 'agora',
+          spotId: currentSpotId,
+          isPlayer: false,
+        },
+      });
+    }
+
     // Spawn 3D speech bubble above player's head
     const newBubble: SpeechBubbleItem = {
       id: `bubble-${Date.now()}`,
       text,
       spotId: currentSpotId,
-      userName: 'Você',
+      userName: senderName,
       createdAt: Date.now(),
     };
     setSpeechBubbles((prev) => [...prev, newBubble]);
   };
 
-  // Clean up speech bubbles after 5 seconds
+  // Supabase Realtime Multiplayer Presence & Chat Synchronization
+  useEffect(() => {
+    if (!room?.id) return;
+
+    const myUserId = user && !user.isGuest && user.id ? user.id : `guest-${Math.random().toString(36).substring(2, 9)}`;
+    const myDisplayName = user?.displayName || 'Visitante';
+
+    const channel = supabase.channel(`room-presence:${room.id}`, {
+      config: {
+        presence: { key: myUserId },
+      },
+    });
+
+    roomChannelRef.current = channel;
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        const playersList: any[] = [];
+
+        Object.keys(state).forEach((key) => {
+          if (key !== myUserId) {
+            const list = state[key] as any[];
+            if (list && list.length > 0) {
+              const latest = list[list.length - 1];
+              playersList.push({
+                userId: key,
+                displayName: latest.displayName || 'Usuário',
+                spotId: latest.spotId || 1,
+                avatar: latest.avatar || null,
+                pose: latest.pose || null,
+              });
+            }
+          }
+        });
+
+        setRemotePlayers(playersList);
+      })
+      .on('broadcast', { event: 'chat' }, ({ payload }) => {
+        if (payload) {
+          setChatMessages((prev) => [...prev, payload]);
+          if (payload.text) {
+            setSpeechBubbles((prev) => [
+              ...prev,
+              {
+                id: `bubble-remote-${Date.now()}`,
+                text: payload.text,
+                spotId: payload.spotId || 1,
+                userName: payload.user || 'Usuário',
+                createdAt: Date.now(),
+              },
+            ]);
+          }
+        }
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.track({
+            userId: myUserId,
+            displayName: myDisplayName,
+            spotId: currentSpotId,
+            avatar: liveAvatar,
+            pose: selectedPose,
+          });
+        }
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+      roomChannelRef.current = null;
+    };
+  }, [room?.id]);
+
+  useEffect(() => {
+    if (roomChannelRef.current) {
+      const myUserId = user && !user.isGuest && user.id ? user.id : `guest-${user?.displayName || 'user'}`;
+      const myDisplayName = user?.displayName || 'Visitante';
+      roomChannelRef.current.track({
+        userId: myUserId,
+        displayName: myDisplayName,
+        spotId: currentSpotId,
+        avatar: liveAvatar,
+        pose: selectedPose,
+      });
+    }
+  }, [currentSpotId, liveAvatar, selectedPose]);
+
+  // Clean up speech bubbles after 7 seconds
   useEffect(() => {
     const timer = setInterval(() => {
       const now = Date.now();
@@ -303,6 +411,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
           gizmoMode={gizmoMode}
           onChangeTransform={setTransform}
           spotVisualConfig={spotVisualConfig}
+          remotePlayers={remotePlayers}
         />
       </div>
 
