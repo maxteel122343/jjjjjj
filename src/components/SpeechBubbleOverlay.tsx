@@ -8,6 +8,7 @@ interface SpeechBubbleOverlayProps {
   currentSpotId?: number;
   activeUserAvatar?: StoreAvatar | null;
   user?: CreatorUser | null;
+  remotePlayers?: any[];
 }
 
 export const SpeechBubbleOverlay: React.FC<SpeechBubbleOverlayProps> = ({
@@ -17,6 +18,7 @@ export const SpeechBubbleOverlay: React.FC<SpeechBubbleOverlayProps> = ({
   currentSpotId = 2,
   activeUserAvatar,
   user,
+  remotePlayers = [],
 }) => {
   // Pre-configured avatars for known participants
   const defaultUserPhoto =
@@ -30,7 +32,7 @@ export const SpeechBubbleOverlay: React.FC<SpeechBubbleOverlayProps> = ({
     'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80';
 
   const getSpotInfo = (spotId: number) => {
-    const isPlayer = spotId === currentSpotId;
+    const isPlayer = String(spotId) === String(currentSpotId);
     if (isPlayer) {
       return {
         name: user?.displayName ? `Você (${user.displayName})` : 'Você (Luzenne)',
@@ -38,6 +40,29 @@ export const SpeechBubbleOverlay: React.FC<SpeechBubbleOverlayProps> = ({
         isPlayer: true,
       };
     }
+
+    // Check if there is a remote player occupying this spotId
+    const remoteUser = remotePlayers.find(
+      (p) => String(p.spotId) === String(spotId)
+    );
+
+    if (remoteUser) {
+      const userPhoto =
+        remoteUser.avatar?.thumb ||
+        remoteUser.avatar?.asset_url ||
+        (typeof remoteUser.avatar?.fileBlobUrl === 'string' && !remoteUser.avatar.fileBlobUrl.startsWith('blob:')
+          ? remoteUser.avatar.fileBlobUrl
+          : null) ||
+        defaultUserPhoto;
+
+      return {
+        name: remoteUser.displayName || `Usuário ${spotId}`,
+        photo: userPhoto,
+        isPlayer: false,
+        isRemoteUser: true,
+      };
+    }
+
     if (spotId === 1) {
       return {
         name: 'Maya',
@@ -53,7 +78,7 @@ export const SpeechBubbleOverlay: React.FC<SpeechBubbleOverlayProps> = ({
       };
     }
 
-    const foundSpot = spots.find((s) => s.id === spotId);
+    const foundSpot = spots.find((s) => s.id === spotId || String(s.id) === String(spotId));
     return {
       name: foundSpot?.occupiedByName || foundSpot?.label || `Visitante ${spotId}`,
       photo: defaultUserPhoto,

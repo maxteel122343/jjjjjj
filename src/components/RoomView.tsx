@@ -437,6 +437,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
         currentSpotId={currentSpotId}
         activeUserAvatar={liveAvatar}
         user={user}
+        remotePlayers={remotePlayers}
       />
 
       {/* Instant HUD Toast Feedback */}

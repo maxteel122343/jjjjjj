@@ -1065,6 +1065,10 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
         sprite.scale.set(1.4, 0.35, 1);
         playerContainer.add(sprite);
 
+        // Store remote player head position in 3D for floating SpeechBubbleOverlay projection
+        const headHeight = isSeated ? 1.0 : 1.45;
+        headPosRef.current[player.spotId] = new THREE.Vector3(posX, posY + headHeight, posZ);
+
         const remoteMesh = createCharacterMesh({
           skinColor: idx % 3 === 0 ? 0xdfb498 : idx % 3 === 1 ? 0x8d5524 : 0xf1c27d,
           hairColor: idx % 2 === 0 ? 0x1f1b18 : 0x4a2c11,
@@ -1075,9 +1079,11 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
           hairStyle: idx % 2 === 0 ? 'curly' : 'afro-short',
           currentPose: isSeated ? 'sentado' : 'stand',
         });
+        remoteMesh.visible = true;
         playerContainer.add(remoteMesh);
 
-        if (avatarGlbUrl && (avatarGlbUrl.startsWith('http') || avatarGlbUrl.startsWith('blob'))) {
+        // Only attempt loading remote GLB if it is a valid web URL or non-stale blob
+        if (avatarGlbUrl && (avatarGlbUrl.startsWith('http://') || avatarGlbUrl.startsWith('https://') || avatarGlbUrl.startsWith('data:'))) {
           const loader = new GLTFLoader();
           loader.load(
             avatarGlbUrl,
@@ -1099,7 +1105,8 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
             },
             undefined,
             (err) => {
-              console.warn('Could not load remote player GLB model, using character mesh:', err);
+              console.warn('Could not load remote player GLB model, using character mesh fallback:', err);
+              remoteMesh.visible = true;
             }
           );
         }
