@@ -284,6 +284,8 @@ export interface CustomizationItem {
   isLockedPosition?: boolean;
   actions?: ObjectAction[];
   activeActionId?: string | null;
+  fileMissing?: boolean;
+  missingReason?: string;
 }
 
 export interface StoreAvatar {
@@ -301,6 +303,8 @@ export interface StoreAvatar {
   isUserPublished?: boolean;
   fileBlobUrl?: string;
   originalItemId?: string;
+  fileMissing?: boolean;
+  missingReason?: string;
 }
 
 export interface AvatarPoseConfig {

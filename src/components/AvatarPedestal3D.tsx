@@ -68,7 +68,7 @@ async function loadGlbWithIndexedDBFallback(
   };
 
   // 1. PRIORIDADE MÁXIMA: Se houver um UUID real (public.assets.id), chama GET /api/v1/assets/{uuid}/resolve
-  const rawCandidates = [assetId, itemId, originalItemId];
+  const rawCandidates = [assetId, itemId, originalItemId, url];
   let validUuid: string | null = null;
   for (const c of rawCandidates) {
     if (typeof c === 'string') {
@@ -103,8 +103,15 @@ async function loadGlbWithIndexedDBFallback(
     }
   }
 
-  // 2. Se a URL fornecida for uma URL remota válida https://, carrega diretamente (NUNCA blob:)
-  if (url && typeof url === 'string' && url.startsWith('http')) {
+  // 2. Se a URL fornecida for uma URL remota pública válida SEM assinatura expirada nem blob:
+  if (
+    url &&
+    typeof url === 'string' &&
+    url.startsWith('http') &&
+    !url.includes('?X-Amz-Signature=') &&
+    !url.includes('?token=') &&
+    !url.startsWith('blob:')
+  ) {
     const ok = await tryLoad(url);
     if (ok) return;
   }

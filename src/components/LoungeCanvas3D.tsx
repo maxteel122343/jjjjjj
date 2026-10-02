@@ -13,10 +13,7 @@ import {
   PlacedObject,
   AccessoryTransform,
 } from '../types';
-import {
-  createScarletSalonArchitecture,
-  createLoftArchitecture,
-} from '../lib/roomArchitectures';
+import { extractAssetId } from '../lib/database';
 
 interface LoungeCanvas3DProps {
   currentPose: AvatarPose;
@@ -455,8 +452,10 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
         objGroup.rotation.set(obj.rotation[0], obj.rotation[1], obj.rotation[2]);
         objGroup.scale.set(obj.scale[0], obj.scale[1], obj.scale[2]);
 
-        if (obj.fileBlobUrl) {
-          gltfLoader.load(obj.fileBlobUrl, (gltf) => {
+        const objUuid = extractAssetId(obj.assetId || (obj as any).asset_id || (obj as any).originalItemId || obj.fileBlobUrl);
+
+        const tryLoadObjGlb = (urlToLoad: string) => {
+          gltfLoader.load(urlToLoad, (gltf) => {
             const m = gltf.scene;
             const rawBox = new THREE.Box3().setFromObject(m);
             const center = rawBox.getCenter(new THREE.Vector3());
@@ -479,6 +478,27 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
             });
             objGroup.add(m);
           });
+        };
+
+        if (objUuid) {
+          fetch(`/api/v1/assets/${objUuid}/resolve`, {
+            headers: { 'x-user-id': 'user-default' },
+          })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              if (data?.download_url) {
+                tryLoadObjGlb(data.download_url);
+              } else if (obj.fileBlobUrl && !obj.fileBlobUrl.includes('?X-Amz-Signature=') && !obj.fileBlobUrl.startsWith('blob:')) {
+                tryLoadObjGlb(obj.fileBlobUrl);
+              }
+            })
+            .catch(() => {
+              if (obj.fileBlobUrl && !obj.fileBlobUrl.includes('?X-Amz-Signature=') && !obj.fileBlobUrl.startsWith('blob:')) {
+                tryLoadObjGlb(obj.fileBlobUrl);
+              }
+            });
+        } else if (obj.fileBlobUrl && !obj.fileBlobUrl.includes('?X-Amz-Signature=') && !obj.fileBlobUrl.startsWith('blob:')) {
+          tryLoadObjGlb(obj.fileBlobUrl);
         } else if (
           obj.type === 'avatar' ||
           obj.isAvatar ||
@@ -1216,55 +1236,50 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
       }
     };
 
-    if (customAvatarObject?.fileBlobUrl) {
+    const avatarUuid = extractAssetId(
+      customAvatarObject?.assetId ||
+      (customAvatarObject as any)?.asset_id ||
+      customAvatarObject?.fileBlobUrl ||
+      activeUserAvatar?.assetId ||
+      (activeUserAvatar as any)?.asset_id ||
+      activeUserAvatar?.fileBlobUrl
+    );
+
+    const tryLoadPlayerGlb = (modelUrl: string) => {
       const gltfLoader = new GLTFLoader();
-      gltfLoader.load(customAvatarObject.fileBlobUrl, (gltf) => {
-        const m = gltf.scene;
-        const box = new THREE.Box3().setFromObject(m);
-        const size = box.getSize(new THREE.Vector3());
-        const targetH = 1.70;
-        const s = targetH / Math.max(0.1, size.y);
-        m.scale.set(s, s, s);
-        const scaledBox = new THREE.Box3().setFromObject(m);
-        const center = scaledBox.getCenter(new THREE.Vector3());
-        m.position.x = -center.x;
-        m.position.z = -center.z;
-        m.position.y = -scaledBox.min.y;
-        applyModelPoseAdjustments(m);
-        m.traverse((child) => {
-          if ((child as THREE.Mesh).isMesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-            child.frustumCulled = false;
-          }
-        });
-        playerGroup.add(m);
-      });
-    } else if (activeUserAvatar?.fileBlobUrl) {
-      const gltfLoader = new GLTFLoader();
-      gltfLoader.load(activeUserAvatar.fileBlobUrl, (gltf) => {
-        const m = gltf.scene;
-        const box = new THREE.Box3().setFromObject(m);
-        const size = box.getSize(new THREE.Vector3());
-        const targetH = 1.70;
-        const s = targetH / Math.max(0.1, size.y);
-        m.scale.set(s, s, s);
-        const scaledBox = new THREE.Box3().setFromObject(m);
-        const center = scaledBox.getCenter(new THREE.Vector3());
-        m.position.x = -center.x;
-        m.position.z = -center.z;
-        m.position.y = -scaledBox.min.y;
-        applyModelPoseAdjustments(m);
-        m.traverse((child) => {
-          if ((child as THREE.Mesh).isMesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-            child.frustumCulled = false;
-          }
-        });
-        playerGroup.add(m);
-      });
-    } else {
+      gltfLoader.load(
+        modelUrl,
+        (gltf) => {
+          const m = gltf.scene;
+          const box = new THREE.Box3().setFromObject(m);
+          const size = box.getSize(new THREE.Vector3());
+          const targetH = 1.70;
+          const s = targetH / Math.max(0.1, size.y);
+          m.scale.set(s, s, s);
+          const scaledBox = new THREE.Box3().setFromObject(m);
+          const center = scaledBox.getCenter(new THREE.Vector3());
+          m.position.x = -center.x;
+          m.position.z = -center.z;
+          m.position.y = -scaledBox.min.y;
+          applyModelPoseAdjustments(m);
+          m.traverse((child) => {
+            if ((child as THREE.Mesh).isMesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+              child.frustumCulled = false;
+            }
+          });
+          playerGroup.add(m);
+        },
+        undefined,
+        (err) => {
+          console.warn('[LoungeCanvas3D] Player GLB load error, fallback to character mesh:', err);
+          renderDefaultCharacterMesh();
+        }
+      );
+    };
+
+    const renderDefaultCharacterMesh = () => {
       const isCyber =
         activeUserAvatar?.name?.toLowerCase().includes('cyber') ||
         activeUserAvatar?.tags?.includes('#streetwear');
@@ -1284,6 +1299,36 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
         currentPose: currentPose?.name || 'Em pé',
       });
       playerGroup.add(defaultPlayerMesh);
+    };
+
+    const directUrl =
+      customAvatarObject?.fileBlobUrl || activeUserAvatar?.fileBlobUrl;
+
+    if (avatarUuid) {
+      fetch(`/api/v1/assets/${avatarUuid}/resolve`, {
+        headers: { 'x-user-id': 'user-default' },
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data?.download_url) {
+            tryLoadPlayerGlb(data.download_url);
+          } else if (directUrl && !directUrl.includes('?X-Amz-Signature=') && !directUrl.startsWith('blob:')) {
+            tryLoadPlayerGlb(directUrl);
+          } else {
+            renderDefaultCharacterMesh();
+          }
+        })
+        .catch(() => {
+          if (directUrl && !directUrl.includes('?X-Amz-Signature=') && !directUrl.startsWith('blob:')) {
+            tryLoadPlayerGlb(directUrl);
+          } else {
+            renderDefaultCharacterMesh();
+          }
+        });
+    } else if (directUrl && !directUrl.includes('?X-Amz-Signature=') && !directUrl.startsWith('blob:')) {
+      tryLoadPlayerGlb(directUrl);
+    } else {
+      renderDefaultCharacterMesh();
     }
 
     // Attach equipped accessories with their saved transforms to the player avatar

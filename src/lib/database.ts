@@ -14,6 +14,21 @@ const STORE_AVATARS_LOCAL_KEY = '3d_social_creator_store_avatars';
 const STORE_POSES_LOCAL_KEY = '3d_social_creator_poses';
 const SHOWCASE_ROOMS_LOCAL_KEY = '3d_social_creator_lobby_rooms';
 
+export function extractAssetId(input?: string | null): string | null {
+  if (!input || typeof input !== 'string') return null;
+  const match = input.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
+  return match ? match[0] : null;
+}
+
+export async function repairOldStoreItemRow(id: string, assetId: string) {
+  if (!id || !assetId || id.startsWith('pub-')) return;
+  try {
+    await supabase.from('store_items').update({ asset_id: assetId, asset_url: null }).eq('id', id);
+  } catch (err) {
+    // Ignore async background repair errors
+  }
+}
+
 /**
  * Persists a published store item to Supabase and localStorage fallback.
  * Works seamlessly whether online with Supabase or offline.
@@ -23,6 +38,7 @@ export async function persistStoreItem(
   user: CreatorUser | null
 ): Promise<{ success: boolean; id: string; error?: string }> {
   const generatedId = payload.id || `pub-${Date.now()}`;
+  const safeAssetId = extractAssetId(payload.originalItemId || payload.id || payload.fileBlobUrl);
 
   // 1. ALWAYS persist to LocalStorage FIRST (Guarantees local & offline persistence)
   try {
@@ -41,7 +57,7 @@ export async function persistStoreItem(
         owned: true,
         applied: false,
         description: payload.description,
-        assetId: payload.originalItemId || generatedId,
+        assetId: safeAssetId || payload.originalItemId || generatedId,
         originalItemId: payload.originalItemId,
       };
       const filtered = avatars.filter((a) => a.id !== generatedId && a.name !== payload.name);
@@ -93,7 +109,7 @@ export async function persistStoreItem(
         },
         actions: payload.actions || [],
         activeActionId: payload.actions?.[0]?.id || null,
-        assetId: payload.originalItemId || generatedId,
+        assetId: safeAssetId || payload.originalItemId || generatedId,
         originalItemId: payload.originalItemId,
       };
       const filtered = items.filter((i) => i.id !== generatedId && i.name !== payload.name);
@@ -118,7 +134,7 @@ export async function persistStoreItem(
         description: payload.description || `Item 3D criado por ${user?.displayName || 'Luzenne'}.`,
         actions: payload.actions || [],
         activeActionId: payload.actions?.[0]?.id || null,
-        assetId: payload.originalItemId || generatedId,
+        assetId: safeAssetId || payload.originalItemId || generatedId,
         originalItemId: payload.originalItemId,
       };
       const filtered = items.filter((i) => i.id !== generatedId && i.name !== payload.name);
@@ -139,12 +155,14 @@ export async function persistStoreItem(
       price: payload.price,
       hashtags: payload.hashtags,
       thumbnail_url: payload.thumbnailUrl,
-      asset_url: payload.fileBlobUrl || null,
+      asset_id: safeAssetId,
+      asset_url: null, // NUNCA grava download_url estática nem blob: no banco
       rarity: payload.rarity || 'COMUM',
       description: payload.description || '',
       publish_mode: payload.publishMode,
       metadata: {
         ...(payload.metadata || {}),
+        asset_id: safeAssetId,
         author: user?.displayName || payload.author || 'Luzenne',
         isAccessory: payload.objectType === 'acessorio',
         accessoryTransform: payload.accessoryTransform,
@@ -320,6 +338,29 @@ export async function fetchPublicStoreItems(): Promise<{
       const poses: AvatarPoseConfig[] = [];
 
       for (const row of data) {
+        const resolvedAssetId =
+          row.asset_id ||
+          extractAssetId(row.metadata?.asset_id) ||
+          extractAssetId(row.metadata?.assetId) ||
+          extractAssetId(row.asset_url) ||
+          extractAssetId(row.metadata?.originalItemId) ||
+          extractAssetId(row.id);
+
+        if (!row.asset_id && resolvedAssetId && row.id && !row.id.startsWith('pub-')) {
+          repairOldStoreItemRow(row.id, resolvedAssetId);
+        }
+
+        const safeUrl =
+          row.asset_url &&
+          typeof row.asset_url === 'string' &&
+          !row.asset_url.includes('?X-Amz-Signature=') &&
+          !row.asset_url.includes('?token=') &&
+          !row.asset_url.startsWith('blob:')
+            ? row.asset_url
+            : undefined;
+
+        const isMissing = !resolvedAssetId && !safeUrl;
+
         if (row.object_type === 'avatar') {
           avatars.push({
             id: row.id,
@@ -333,8 +374,11 @@ export async function fetchPublicStoreItems(): Promise<{
             owned: true,
             applied: false,
             description: row.description,
-            fileBlobUrl: row.asset_url,
+            fileBlobUrl: safeUrl,
+            assetId: resolvedAssetId || undefined,
             originalItemId: row.metadata?.originalItemId || row.id,
+            fileMissing: isMissing,
+            missingReason: isMissing ? 'Arquivo 3D Ausente / Não encontrado' : undefined,
           });
         } else if (row.object_type === 'pose') {
           poses.push({
@@ -365,7 +409,8 @@ export async function fetchPublicStoreItems(): Promise<{
             rarity: row.rarity || 'RARO',
             isPublishedByCreator: true,
             author: row.metadata?.author || 'Criador',
-            fileBlobUrl: row.asset_url,
+            fileBlobUrl: safeUrl,
+            assetId: resolvedAssetId || undefined,
             description: row.description,
             isAccessory: isAcessorio,
             accessoryAttachment: row.metadata?.accessoryAttachment || (isAcessorio ? 'companion_float' : undefined),
@@ -373,6 +418,8 @@ export async function fetchPublicStoreItems(): Promise<{
             actions: row.metadata?.actions || [],
             activeActionId: row.metadata?.actions?.[0]?.id || null,
             originalItemId: row.metadata?.originalItemId || row.id,
+            fileMissing: isMissing,
+            missingReason: isMissing ? 'Arquivo 3D Ausente / Não encontrado' : undefined,
           });
         }
       }
