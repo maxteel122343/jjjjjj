@@ -378,15 +378,21 @@ export const RoomView: React.FC<RoomViewProps> = ({
   useEffect(() => {
     if (roomChannelRef.current) {
       const myDisplayName = user?.displayName || 'Visitante';
+      const customUrl =
+        effectiveCustomAvatarObject?.fileBlobUrl ||
+        effectiveCustomAvatarObject?.asset_url ||
+        effectiveCustomAvatarObject?.url;
+
       roomChannelRef.current.track({
         sessionId: tabSessionId,
         displayName: myDisplayName,
         spotId: currentSpotId,
         avatar: liveAvatar,
         pose: selectedPose,
+        customAvatarUrl: customUrl,
       });
     }
-  }, [currentSpotId, liveAvatar, selectedPose, tabSessionId]);
+  }, [currentSpotId, liveAvatar, selectedPose, tabSessionId, effectiveCustomAvatarObject]);
 
   // Clean up speech bubbles after 7 seconds
   useEffect(() => {

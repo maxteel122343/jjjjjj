@@ -545,6 +545,11 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
     scene.add(playerGroup);
     playerGroupRef.current = playerGroup;
 
+    // Group for remote players in the 3D scene
+    const remotePlayersGroup = new THREE.Group();
+    scene.add(remotePlayersGroup);
+    remotePlayersGroupRef.current = remotePlayersGroup;
+
     // Real 3D TransformControls Gizmo on active player avatar (matching Creator Mode functionality)
     const transformControls = new TransformControls(camera, renderer.domElement);
     transformControls.size = 0.85;
@@ -1021,7 +1026,11 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
         const poseGlbKey = player.pose?.glbKey || 'stand';
         const isSeated = poseGlbKey.includes('sit') || (spot as any).type === 'sentar';
 
-        const avatarGlbUrl = player.avatar?.fileBlobUrl || player.avatar?.asset_url;
+        const avatarGlbUrl =
+          player.avatar?.fileBlobUrl ||
+          player.avatar?.asset_url ||
+          player.customAvatarUrl ||
+          player.avatarUrl;
         const playerContainer = new THREE.Group();
         playerContainer.position.set(posX, posY, posZ);
         playerContainer.rotation.y = rotY;
