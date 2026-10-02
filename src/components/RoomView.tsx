@@ -267,6 +267,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
         payload: {
           id: `msg-${Date.now()}`,
           user: senderName,
+          senderSessionId: tabSessionId,
           avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
           text,
           time: 'agora',
@@ -287,16 +288,30 @@ export const RoomView: React.FC<RoomViewProps> = ({
     setSpeechBubbles((prev) => [...prev, newBubble]);
   };
 
+  // Generate a unique session ID for this browser tab instance
+  const tabSessionId = React.useMemo(() => {
+    let existing = sessionStorage.getItem('3d_social_session_id');
+    if (!existing) {
+      existing = `sess-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      sessionStorage.setItem('3d_social_session_id', existing);
+    }
+    return existing;
+  }, []);
+
+  // Normalize channel name across all room ID variants
+  const effectiveRoomId = (room.editorRoomId || room.editorRoom?.id || room.id)
+    .replace(/^(editor|playtest)-/, '');
+
   // Supabase Realtime Multiplayer Presence & Chat Synchronization
   useEffect(() => {
-    if (!room?.id) return;
+    if (!effectiveRoomId) return;
 
-    const myUserId = user && !user.isGuest && user.id ? user.id : `guest-${Math.random().toString(36).substring(2, 9)}`;
     const myDisplayName = user?.displayName || 'Visitante';
+    const presenceKey = `${tabSessionId}`;
 
-    const channel = supabase.channel(`room-presence:${room.id}`, {
+    const channel = supabase.channel(`room-presence:${effectiveRoomId}`, {
       config: {
-        presence: { key: myUserId },
+        presence: { key: presenceKey },
       },
     });
 
@@ -308,7 +323,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
         const playersList: any[] = [];
 
         Object.keys(state).forEach((key) => {
-          if (key !== myUserId) {
+          if (key !== presenceKey) {
             const list = state[key] as any[];
             if (list && list.length > 0) {
               const latest = list[list.length - 1];
@@ -326,7 +341,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
         setRemotePlayers(playersList);
       })
       .on('broadcast', { event: 'chat' }, ({ payload }) => {
-        if (payload) {
+        if (payload && payload.senderSessionId !== tabSessionId) {
           setChatMessages((prev) => [...prev, payload]);
           if (payload.text) {
             setSpeechBubbles((prev) => [
@@ -345,7 +360,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           await channel.track({
-            userId: myUserId,
+            sessionId: tabSessionId,
             displayName: myDisplayName,
             spotId: currentSpotId,
             avatar: liveAvatar,
@@ -358,21 +373,20 @@ export const RoomView: React.FC<RoomViewProps> = ({
       supabase.removeChannel(channel);
       roomChannelRef.current = null;
     };
-  }, [room?.id]);
+  }, [effectiveRoomId, tabSessionId]);
 
   useEffect(() => {
     if (roomChannelRef.current) {
-      const myUserId = user && !user.isGuest && user.id ? user.id : `guest-${user?.displayName || 'user'}`;
       const myDisplayName = user?.displayName || 'Visitante';
       roomChannelRef.current.track({
-        userId: myUserId,
+        sessionId: tabSessionId,
         displayName: myDisplayName,
         spotId: currentSpotId,
         avatar: liveAvatar,
         pose: selectedPose,
       });
     }
-  }, [currentSpotId, liveAvatar, selectedPose]);
+  }, [currentSpotId, liveAvatar, selectedPose, tabSessionId]);
 
   // Clean up speech bubbles after 7 seconds
   useEffect(() => {
