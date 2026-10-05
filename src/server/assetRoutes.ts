@@ -619,5 +619,65 @@ export function createAssetRouter(): Router {
     }
   });
 
+  // --------------------------------------------------------------------------
+  // 5. GET /showcase-rooms (List all published rooms with direct db pool guarantee)
+  // --------------------------------------------------------------------------
+  router.get('/showcase-rooms', async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const db = getDatabasePool();
+      const result = await db.query(
+        `SELECT id, user_id, name, title, description, thumbnail_url, cover_url, 
+                model_url, asset_id, boundary, spots, placed_objects, hashtags, 
+                price, publish_mode, is_published, created_at, updated_at
+         FROM public.showcase_rooms 
+         WHERE is_published = TRUE
+         ORDER BY created_at DESC`
+      );
+      res.status(200).json({ rooms: result.rows || [] });
+    } catch (err: any) {
+      console.error('[GET /showcase-rooms error]:', err);
+      res.status(500).json({
+        error: err?.code || 'SHOWCASE_ROOMS_FETCH_FAILED',
+        message: sanitizeErrorMessage(err),
+      });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // 6. DELETE /showcase-rooms/:id (Permanent deletion of room)
+  // --------------------------------------------------------------------------
+  router.delete('/showcase-rooms/:id', async (req: Request, res: Response): Promise<void> => {
+    try {
+      const roomId = req.params.id;
+      const db = getDatabasePool();
+      await db.query(`DELETE FROM public.showcase_rooms WHERE id = $1`, [roomId]);
+      res.status(200).json({ success: true, id: roomId });
+    } catch (err: any) {
+      console.error('[DELETE /showcase-rooms/:id error]:', err);
+      res.status(500).json({
+        error: err?.code || 'SHOWCASE_ROOM_DELETE_FAILED',
+        message: sanitizeErrorMessage(err),
+      });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // 7. DELETE /store-items/:id (Permanent deletion of store item / avatar / pose)
+  // --------------------------------------------------------------------------
+  router.delete('/store-items/:id', async (req: Request, res: Response): Promise<void> => {
+    try {
+      const itemId = req.params.id;
+      const db = getDatabasePool();
+      await db.query(`DELETE FROM public.store_items WHERE id = $1`, [itemId]);
+      res.status(200).json({ success: true, id: itemId });
+    } catch (err: any) {
+      console.error('[DELETE /store-items/:id error]:', err);
+      res.status(500).json({
+        error: err?.code || 'STORE_ITEM_DELETE_FAILED',
+        message: sanitizeErrorMessage(err),
+      });
+    }
+  });
+
   return router;
 }

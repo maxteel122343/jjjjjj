@@ -45,6 +45,8 @@ interface MyPublicationsModalProps {
   customizationItems: CustomizationItem[];
   avatarPoses: AvatarPoseConfig[];
   onShowToast: (msg: string) => void;
+  onDeleteRoom?: (roomId: string) => void;
+  onDeleteItem?: (itemId: string, type: 'avatar' | 'pose' | 'item') => void;
 }
 
 export const MyPublicationsModal: React.FC<MyPublicationsModalProps> = ({
@@ -59,13 +61,30 @@ export const MyPublicationsModal: React.FC<MyPublicationsModalProps> = ({
   customizationItems,
   avatarPoses,
   onShowToast,
+  onDeleteRoom,
+  onDeleteItem,
 }) => {
-  const [activeTab, setActiveTab] = useState<'rooms' | 'items' | 'sql'>('rooms');
-  const [copiedSql, setCopiedSql] = useState(false);
+  const [activeTab, setActiveTab] = useState<'rooms' | 'items'>('rooms');
   const [publishedRooms, setPublishedRooms] = useState<any[]>([]);
+  const [publishedAvatars, setPublishedAvatars] = useState<StoreAvatar[]>([]);
+  const [publishedStoreItems, setPublishedStoreItems] = useState<CustomizationItem[]>([]);
+  const [publishedPoses, setPublishedPoses] = useState<AvatarPoseConfig[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [roomToDelete, setRoomToDelete] = useState<any | null>(null);
   const [itemToDelete, setItemToDelete] = useState<{ id: string; name: string; type: any } | null>(null);
+
+  // Synchronize local published items with incoming props
+  useEffect(() => {
+    setPublishedAvatars(
+      storeAvatars.filter((a) => a.isUserPublished || a.id.startsWith('pub-') || a.id.startsWith('av-pub'))
+    );
+    setPublishedStoreItems(
+      customizationItems.filter((i) => i.isPublishedByCreator || i.id.startsWith('pub-') || i.id.startsWith('acc-pub'))
+    );
+    setPublishedPoses(
+      avatarPoses.filter((p) => p.isPublishedByCreator || p.id.startsWith('pose-pub'))
+    );
+  }, [storeAvatars, customizationItems, avatarPoses]);
 
   // Editing published item state
   const [editingItemData, setEditingItemData] = useState<{
@@ -188,9 +207,6 @@ export const MyPublicationsModal: React.FC<MyPublicationsModalProps> = ({
     setEditActions((prev) => [...prev, act]);
   };
 
-  const publishedAvatars = storeAvatars.filter((a) => a.isUserPublished);
-  const publishedStoreItems = customizationItems.filter((i) => i.isPublishedByCreator);
-  const publishedPoses = avatarPoses.filter((p) => p.isPublishedByCreator);
   const totalItemsCount = publishedAvatars.length + publishedStoreItems.length + publishedPoses.length;
 
   const loadRooms = async () => {
@@ -294,22 +310,6 @@ export const MyPublicationsModal: React.FC<MyPublicationsModalProps> = ({
             <span>Itens, Avatares & Poses</span>
             <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-[#d4af37]/20 text-[#ffd700]">
               {totalItemsCount}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('sql')}
-            className={`px-4 py-2.5 text-xs font-semibold rounded-t-lg transition-all flex items-center gap-2 cursor-pointer border-b-2 ${
-              activeTab === 'sql'
-                ? 'border-[#ffd700] text-[#ffd700] bg-[#1c1f2b]'
-                : 'border-transparent text-[#e8d5b5]/60 hover:text-[#e8d5b5] hover:bg-white/5'
-            }`}
-          >
-            <Database className="w-3.5 h-3.5" />
-            <span>Script SQL Supabase</span>
-            <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-green-500/20 text-green-400 font-mono font-bold">
-              SQL
             </span>
           </button>
         </div>
@@ -561,78 +561,6 @@ export const MyPublicationsModal: React.FC<MyPublicationsModalProps> = ({
               )}
             </div>
           )}
-
-          {/* TAB 3: SCRIPT SQL SUPABASE */}
-          {activeTab === 'sql' && (() => {
-            const sqlScript = generateSqlPersistenceScript(publishedRooms, {
-              avatars: publishedAvatars,
-              customizationItems: publishedStoreItems,
-              poses: publishedPoses,
-            });
-            return (
-              <div className="space-y-4">
-                <div className="p-4 rounded-xl border border-[#d4af37]/40 bg-[#161822] space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-bold text-[#ffd700] flex items-center gap-2">
-                        <Database className="w-4 h-4 text-green-400" />
-                        Script de Persistência SQL Supabase
-                      </h3>
-                      <p className="text-xs text-[#e8d5b5]/70 mt-0.5">
-                        Cole este script diretamente no <strong>SQL Editor</strong> do seu Supabase para criar as tabelas, permissões RLS universais (visíveis em todas as abas e contas) e cadastrar todos os itens e acessórios criados.
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(sqlScript);
-                        setCopiedSql(true);
-                        onShowToast('Script SQL copiado para a área de transferência! Cole no SQL Editor do Supabase.');
-                        setTimeout(() => setCopiedSql(false), 3000);
-                      }}
-                      className="px-4 py-2 rounded-lg bg-[#ffd700] hover:bg-amber-300 text-black font-bold text-xs flex items-center gap-2 cursor-pointer shadow-lg active:scale-95 transition-all flex-shrink-0"
-                    >
-                      {copiedSql ? (
-                        <>
-                          <Check className="w-4 h-4 text-green-800" />
-                          <span>Copiado com Sucesso!</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-4 h-4 text-black" />
-                          <span>Copiar Script SQL Completo</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-
-                  <div className="text-[11px] bg-black/60 border border-green-500/30 rounded-lg p-3 text-green-300 flex items-start gap-2">
-                    <Sparkles className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
-                    <div>
-                      <strong>Passo a passo rápido:</strong>
-                      <ol className="list-decimal list-inside space-y-0.5 mt-1 text-zinc-300">
-                        <li>Clique no botão acima <strong>"Copiar Script SQL Completo"</strong></li>
-                        <li>Abra seu painel do Supabase no navegador e clique em <strong>SQL Editor</strong></li>
-                        <li>Crie uma <strong>New query</strong>, cole o código e clique em <strong>Run</strong></li>
-                        <li>Pronto! Todas as salas, acessórios, poses e itens ficarão salvos e visíveis em qualquer aba ou conta logada!</li>
-                      </ol>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="relative rounded-xl border border-zinc-800 bg-[#0d0e12] overflow-hidden">
-                  <div className="px-4 py-2 border-b border-zinc-800 bg-black/60 flex items-center justify-between text-xs text-zinc-400">
-                    <span className="font-mono text-[11px] text-[#d4af37]">preview_persistence.sql</span>
-                    <span className="text-[10px] text-zinc-500">{sqlScript.split('\n').length} linhas</span>
-                  </div>
-                  <pre className="p-4 text-xs font-mono text-zinc-300 overflow-x-auto max-h-[360px] custom-scrollbar selection:bg-amber-500/30">
-                    {sqlScript}
-                  </pre>
-                </div>
-              </div>
-            );
-          })()}
         </div>
 
         {/* Confirmation Modal for Room Deletion */}

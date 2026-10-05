@@ -22,6 +22,13 @@ export interface SpotMotionConfig {
   label?: string;
 }
 
+export interface ObjectIdentifier {
+  id: string;
+  name: string; // Ex: "Cabeça", "Mão Direita", "Dedos", "Pés", "Boca"
+  tag: string; // Ex: "cabeca", "mao_direita", "dedos", "pes", etc.
+  localPosition: [number, number, number]; // Offset local relativo ao objeto
+}
+
 export interface SpotItem {
   id: string;
   name: string;
@@ -34,12 +41,21 @@ export interface SpotItem {
   relativeRadius?: number;
   attachmentTag?: string;
   connectsToTags?: string[];
+  receptiveIdentifier?: string; // Tag de identificador esperado (ex: "cabeca", "mao", "dedos")
+  isSubjectMovable?: boolean; // Se true (sujeito), o objeto se move para o avatar. Se false, o avatar se move até o spot.
   motion?: SpotMotionConfig; // Configuração de movimento (Motion Spot)
 }
 
 export interface ObjectAction {
   id: string;
   name: string; // Ex: "Frente e Trás", "Girar e Crescer", "Órbita 360°"
+  motion: SpotMotionConfig;
+}
+
+export interface SavedActionHistoryItem {
+  id: string;
+  name: string;
+  savedAt: string;
   motion: SpotMotionConfig;
 }
 
@@ -69,6 +85,7 @@ export interface PlacedObject {
   accessoryTransform?: AccessoryTransform;
   actions?: ObjectAction[];
   activeActionId?: string | null;
+  identifiers?: ObjectIdentifier[]; // Identificadores de ponto (anchors) no objeto/avatar
   position: [number, number, number];
   rotation: [number, number, number];
   scale: [number, number, number];

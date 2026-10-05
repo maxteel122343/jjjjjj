@@ -1240,26 +1240,41 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
           if (s?.motion?.enabled) featuredMotionSpot = s;
         }
 
+        // Resolve which spot the avatar is assigned to:
+        // Priority 1: activeAvatarSpotId (explicitly selected/clicked/teleported spot)
+        // Priority 2: If activeAvatarSpotId is null, strictly snap only to the single closest spot within 0.25m
+        let resolvedAvatarSpotId: string | null = activeAvatarSpotId;
+        if (!resolvedAvatarSpotId && effectiveCustomAvatarObj && currentSpots.length > 0) {
+          let closestDist = Infinity;
+          let closestId: string | null = null;
+          for (const s of currentSpots) {
+            const d = Math.hypot(
+              effectiveCustomAvatarObj.position[0] - s.position[0],
+              effectiveCustomAvatarObj.position[2] - s.position[2]
+            );
+            if (d < closestDist) {
+              closestDist = d;
+              closestId = s.id;
+            }
+          }
+          // Only snap if strictly within 0.25m and uniquely closest to avoid capturing adjacent spots
+          if (closestId && closestDist <= 0.25) {
+            resolvedAvatarSpotId = closestId;
+          }
+        }
+
         currentSpots.forEach((spot) => {
           const isFeatured = featuredMotionSpot?.id === spot.id;
           const hasMotion = !!spot.motion?.enabled;
 
-          // Check if ANY avatar is on this spot:
-          // 1) activeAvatarSpotId === spot.id (avatar was teleported to or placed on this spot)
-          // 2) Custom avatar object position is near this spot
-          // 3) Spot is parented to or attached to avatar object
-          const isAvatarAssignedToSpot = activeAvatarSpotId === spot.id;
-          const isCustomAvatarNearSpot =
-            !!effectiveCustomAvatarObj &&
-            Math.hypot(
-              effectiveCustomAvatarObj.position[0] - spot.position[0],
-              effectiveCustomAvatarObj.position[2] - spot.position[2]
-            ) < 0.8;
+          // Check if the avatar is on THIS specific spot:
+          // 1) resolvedAvatarSpotId === spot.id (avatar was assigned or clicked on this spot)
+          // 2) Spot is parented to or attached to avatar object
+          const isAvatarAssignedToSpot = !!resolvedAvatarSpotId && resolvedAvatarSpotId === spot.id;
           const isSpotParentOfAvatar =
             !!(spot.parentObjectId && effectiveCustomAvatarId && spot.parentObjectId === effectiveCustomAvatarId);
 
-          const isAvatarOnSpot =
-            isAvatarAssignedToSpot || isCustomAvatarNearSpot || isSpotParentOfAvatar;
+          const isAvatarOnSpot = isAvatarAssignedToSpot || isSpotParentOfAvatar;
 
           // Simulate if explicitly testing this spot, or if it's the featured selected spot with motion enabled, or if avatar is on it
           const shouldSimulate = hasMotion && (isFeatured || (activeTestingId === spot.id) || isAvatarOnSpot);
@@ -1436,7 +1451,7 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
             // 5. Move Avatar (uploaded custom avatar object OR default humanoid avatar) along trajectory
             const shouldMoveAvatar =
               isAvatarOnSpot &&
-              (cfg.target === 'avatar' || cfg.target === 'both' || !cfg.target || isFeatured);
+              (cfg.target === 'avatar' || cfg.target === 'both' || !cfg.target);
 
             if (shouldMoveAvatar) {
               let targetX = baseWorldPos.x + currentMotion.offset.x;
@@ -1591,6 +1606,24 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
             }
           }
         });
+
+        // Ensure active avatar halo is at the avatar's actual resting position when not moved by motion
+        if (activeAvatarHaloRef.current && effectiveCustomAvatarId && !movedObjectIds.has(effectiveCustomAvatarId)) {
+          const avObj = currentPlacedObjects.find((o) => o.id === effectiveCustomAvatarId);
+          if (avObj) {
+            activeAvatarHaloRef.current.position.set(avObj.position[0], 0.025, avObj.position[2]);
+          }
+        }
+
+        // Ensure humanoid avatar mesh stays firmly on its assigned still spot when not moved by motion
+        if (avatarGroupRef.current && !effectiveCustomAvatarId && resolvedAvatarSpotId) {
+          const curSpot = currentSpots.find((s) => s.id === resolvedAvatarSpotId);
+          if (curSpot && !curSpot.motion?.enabled) {
+            avatarGroupRef.current.position.set(...curSpot.position);
+            avatarGroupRef.current.rotation.y = THREE.MathUtils.degToRad(curSpot.rotation);
+            avatarGroupRef.current.scale.set(1, 1, 1);
+          }
+        }
 
         // Hide simulated point and trajectory line when not testing any motion
         if (!isAnyTestingMotion) {
@@ -3378,10 +3411,13 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
             const showArrow = isArrowOnly || indicatorStyle === 'full';
             const showSignal = !isArrowOnly;
 
+            const depthZIndex = Math.max(10, Math.min(30, Math.round(30 - proj.z * 5)));
+            const effectiveZIndex = isAvatarHere ? 50 : isSelected ? 40 : depthZIndex;
+
             return (
               <div
                 key={spot.id}
-                style={{ left: `${screenX}px`, top: `${screenY}px` }}
+                style={{ left: `${screenX}px`, top: `${screenY}px`, zIndex: effectiveZIndex }}
                 className={`absolute transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center group ${
                   lockSpots ? 'pointer-events-none opacity-60' : 'pointer-events-auto cursor-pointer'
                 }`}
@@ -3627,6 +3663,26 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                   <span>{avatarCurrentSpotId === selectedSpot.id ? '✓ Avatar no Spot (Acompanhando Trajetória)' : 'Posicionar Avatar neste Spot'}</span>
                 </button>
               </div>
+            )}
+
+            {/* Quick Avatar Placement Button for Still Spot (without motion) */}
+            {!selectedSpot.motion?.enabled && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAvatarTeleport(selectedSpot.id);
+                }}
+                className={`w-full py-1.5 px-2 rounded text-[10px] font-bold border transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-sm ${
+                  avatarCurrentSpotId === selectedSpot.id
+                    ? 'bg-emerald-900/70 border-emerald-400 text-emerald-200'
+                    : 'bg-black/60 border-[#ffd700]/50 hover:bg-[#ffd700]/20 text-[#ffd700]'
+                }`}
+                title="Posicionar avatar fixo e parado neste spot"
+              >
+                <span>🚶</span>
+                <span>{avatarCurrentSpotId === selectedSpot.id ? '✓ Avatar Fixo neste Spot' : 'Posicionar Avatar neste Spot'}</span>
+              </button>
             )}
 
             {/* Mode Selector Buttons (Mover, Rodar, Elevar) */}

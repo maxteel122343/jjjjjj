@@ -817,6 +817,29 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
             (currentPose.rotationOffset || 0) +
             ryDeg;
           playerGroupRef.current.rotation.y = THREE.MathUtils.degToRad(totalAngleDeg);
+        } else if (playerGroupRef.current) {
+          // If the current spot has NO motion configured, ensure player avatar is held firmly at its still spot position
+          const activeSpot = spots.find((s) => s.id === currentSpotIdRef.current) || spots[1];
+          if (activeSpot) {
+            const offX = transformRef.current.positionOffset?.[0] || 0;
+            const offY = transformRef.current.positionOffset?.[1] || 0;
+            const offZ = transformRef.current.positionOffset?.[2] || 0;
+            const targetX = activeSpot.position[0] + offX;
+            const targetY = activeSpot.position[1] + (currentPose.heightOffset || 0) + offY;
+            const targetZ = activeSpot.position[2] + offZ;
+            if (
+              Math.abs(playerGroupRef.current.position.x - targetX) > 0.001 ||
+              Math.abs(playerGroupRef.current.position.y - targetY) > 0.001 ||
+              Math.abs(playerGroupRef.current.position.z - targetZ) > 0.001
+            ) {
+              playerGroupRef.current.position.set(targetX, targetY, targetZ);
+              const totalAngleDeg =
+                activeSpot.rotation +
+                transformRef.current.angle +
+                (currentPose.rotationOffset || 0);
+              playerGroupRef.current.rotation.y = THREE.MathUtils.degToRad(totalAngleDeg);
+            }
+          }
         }
       }
 
@@ -992,13 +1015,30 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
           true
         );
         if (intersects.length > 0) {
-          let hitObj: THREE.Object3D | null = intersects[0].object;
-          while (hitObj && (hitObj as any).userData?.spotId === undefined && hitObj.parent) {
-            hitObj = hitObj.parent;
+          const hitPoint = intersects[0].point;
+          // Disambiguate when spots overlap: pick the spot whose center is closest to the hit point
+          let bestSpot = spots[0];
+          let bestDistSq = Infinity;
+          for (const s of spots) {
+            const dx = s.position[0] - hitPoint.x;
+            const dz = s.position[2] - hitPoint.z;
+            const distSq = dx * dx + dz * dz;
+            if (distSq < bestDistSq) {
+              bestDistSq = distSq;
+              bestSpot = s;
+            }
           }
-          if (hitObj && (hitObj as any).userData?.spotId !== undefined) {
-            const clickedSpotId = (hitObj as any).userData.spotId;
-            onSelectSpotRef.current(clickedSpotId);
+          if (bestSpot) {
+            onSelectSpotRef.current(bestSpot.id);
+          } else {
+            let hitObj: THREE.Object3D | null = intersects[0].object;
+            while (hitObj && (hitObj as any).userData?.spotId === undefined && hitObj.parent) {
+              hitObj = hitObj.parent;
+            }
+            if (hitObj && (hitObj as any).userData?.spotId !== undefined) {
+              const clickedSpotId = (hitObj as any).userData.spotId;
+              onSelectSpotRef.current(clickedSpotId);
+            }
           }
         }
       }

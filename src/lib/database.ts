@@ -304,31 +304,74 @@ export async function persistShowcaseRoom(
 export async function fetchMyPublishedRooms(user: CreatorUser | null): Promise<any[]> {
   const localRaw = localStorage.getItem(SHOWCASE_ROOMS_LOCAL_KEY);
   const localList = localRaw ? JSON.parse(localRaw) : [];
+  const map = new Map<string, any>();
 
-  if (user && !user.isGuest && user.id) {
-    try {
-      const { data, error } = await supabase
-        .from('showcase_rooms')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-
-      if (!error && data && data.length > 0) {
-        // Merge Supabase with local
-        const merged = [...data];
-        for (const item of localList) {
-          if (!merged.some((m) => m.id === item.id)) {
-            merged.push(item);
-          }
-        }
-        return merged;
+  // 1. Tenta carregar via API do backend com acesso direto ao banco
+  try {
+    const res = await fetch('/api/v1/showcase-rooms');
+    if (res.ok) {
+      const json = await res.json();
+      if (Array.isArray(json.rooms)) {
+        json.rooms.forEach((r: any) => {
+          map.set(r.id, {
+            id: r.id,
+            name: r.name || r.title || 'Sala 3D',
+            description: r.description || 'Sala publicada',
+            thumb: r.cover_url || r.thumbnail_url || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=400&q=80',
+            createdAt: r.created_at,
+            price: r.price || 0,
+            publishMode: r.publish_mode || 'simples',
+            isPublished: true,
+            spots: r.spots || [],
+            placedObjects: r.placed_objects || [],
+            boundary: r.boundary,
+          });
+        });
       }
-    } catch (err: any) {
-      console.warn('Supabase fetchMyPublishedRooms failed, using local list:', err.message);
     }
+  } catch (apiErr) {
+    console.warn('API /showcase-rooms fallback:', apiErr);
   }
 
-  return localList;
+  // 2. Tenta também via Supabase client
+  try {
+    const { data, error } = await supabase
+      .from('showcase_rooms')
+      .select('*')
+      .eq('is_published', true)
+      .order('created_at', { ascending: false });
+
+    if (!error && data && data.length > 0) {
+      data.forEach((r: any) => {
+        if (!map.has(r.id)) {
+          map.set(r.id, {
+            id: r.id,
+            name: r.name || r.title || 'Sala 3D',
+            description: r.description || 'Sala publicada',
+            thumb: r.cover_url || r.thumbnail_url || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=400&q=80',
+            createdAt: r.created_at,
+            price: r.price || 0,
+            publishMode: r.publish_mode || 'simples',
+            isPublished: true,
+            spots: r.spots || [],
+            placedObjects: r.placed_objects || [],
+            boundary: r.boundary,
+          });
+        }
+      });
+    }
+  } catch (err: any) {
+    console.warn('Supabase fetchMyPublishedRooms fallback:', err?.message);
+  }
+
+  // 3. Mescla com dados locais caso offline
+  localList.forEach((r: any) => {
+    if (!map.has(r.id)) {
+      map.set(r.id, r);
+    }
+  });
+
+  return Array.from(map.values());
 }
 
 /**
@@ -576,12 +619,20 @@ export async function deletePublishedRoom(
   roomId: string,
   user: CreatorUser | null
 ): Promise<{ success: boolean; error?: string }> {
-  if (user && !user.isGuest && user.id) {
-    try {
-      await supabase.from('showcase_rooms').delete().eq('id', roomId);
-    } catch (err: any) {
-      console.warn('Supabase delete room error:', err.message);
-    }
+  // 1. Deleta via API do backend com privilégio no banco
+  try {
+    await fetch(`/api/v1/showcase-rooms/${encodeURIComponent(roomId)}`, {
+      method: 'DELETE',
+    });
+  } catch (err: any) {
+    console.warn('API delete showcase-room fallback:', err?.message);
+  }
+
+  // 2. Deleta também via Supabase client
+  try {
+    await supabase.from('showcase_rooms').delete().eq('id', roomId);
+  } catch (err: any) {
+    console.warn('Supabase delete room error:', err?.message);
   }
 
   try {
@@ -614,12 +665,20 @@ export async function deletePublishedItem(
   itemType: 'avatar' | 'pose' | 'item' | 'moveis' | 'sala',
   user: CreatorUser | null
 ): Promise<{ success: boolean; error?: string }> {
-  if (user && !user.isGuest && user.id) {
-    try {
-      await supabase.from('store_items').delete().eq('id', itemId);
-    } catch (err: any) {
-      console.warn('Supabase delete store_item error:', err.message);
-    }
+  // 1. Deleta via API do backend com privilégio no banco
+  try {
+    await fetch(`/api/v1/store-items/${encodeURIComponent(itemId)}`, {
+      method: 'DELETE',
+    });
+  } catch (err: any) {
+    console.warn('API delete store-item fallback:', err?.message);
+  }
+
+  // 2. Deleta também via Supabase client
+  try {
+    await supabase.from('store_items').delete().eq('id', itemId);
+  } catch (err: any) {
+    console.warn('Supabase delete store_item error:', err?.message);
   }
 
   try {
