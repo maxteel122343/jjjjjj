@@ -679,5 +679,59 @@ export function createAssetRouter(): Router {
     }
   });
 
+  // --------------------------------------------------------------------------
+  // 8. DELETE /inventory/:id (Delete individual uploaded item)
+  // --------------------------------------------------------------------------
+  router.delete('/inventory/:id', async (req: Request, res: Response): Promise<void> => {
+    try {
+      const itemId = req.params.id;
+      const userId = getUserIdFromRequest(req);
+      const db = getDatabasePool();
+      await db.query(
+        `DELETE FROM public.inventory_items WHERE (id = $1 OR asset_id = $1) AND user_id = $2`,
+        [itemId, userId]
+      );
+      res.status(200).json({ success: true, id: itemId });
+    } catch (err: any) {
+      console.error('[DELETE /inventory/:id error]:', err);
+      res.status(500).json({
+        error: err?.code || 'INVENTORY_DELETE_FAILED',
+        message: sanitizeErrorMessage(err),
+      });
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // 9. DELETE /inventory & /inventory/clear-all (Batch delete or clear all)
+  // --------------------------------------------------------------------------
+  router.delete(['/inventory', '/inventory/clear-all'], async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = getUserIdFromRequest(req);
+      const idsToDelete = req.body?.ids;
+      const db = getDatabasePool();
+
+      if (Array.isArray(idsToDelete) && idsToDelete.length > 0) {
+        for (const id of idsToDelete) {
+          await db.query(
+            `DELETE FROM public.inventory_items WHERE (id = $1 OR asset_id = $1) AND user_id = $2`,
+            [id, userId]
+          );
+        }
+        res.status(200).json({ success: true, count: idsToDelete.length });
+        return;
+      }
+
+      // Clear all items for this user
+      await db.query(`DELETE FROM public.inventory_items WHERE user_id = $1`, [userId]);
+      res.status(200).json({ success: true, cleared_all: true });
+    } catch (err: any) {
+      console.error('[DELETE /inventory error]:', err);
+      res.status(500).json({
+        error: err?.code || 'INVENTORY_CLEAR_FAILED',
+        message: sanitizeErrorMessage(err),
+      });
+    }
+  });
+
   return router;
 }

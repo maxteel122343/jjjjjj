@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box, ChevronDown, LogOut, ArrowDown, Sparkles, X, Plus, GripVertical, Check } from 'lucide-react';
+import { Box, ChevronDown, LogOut, ArrowDown, Sparkles, X, Plus, GripVertical, Check, Heart } from 'lucide-react';
 import {
   RoomData,
   AvatarPose,
@@ -21,8 +21,10 @@ import { GizmoWidget } from './GizmoWidget';
 import { GlassChat } from './GlassChat';
 import { SpeechBubbleOverlay } from './SpeechBubbleOverlay';
 import { UnifiedRoomInventory } from './UnifiedRoomInventory';
+import { RoomAudioPlayer } from './RoomAudioPlayer';
 import { safeLocalStorageSet } from '../lib/storageUtils';
 import { supabase } from '../lib/supabase';
+import { toggleRoomLike } from '../lib/database';
 
 interface RoomViewProps {
   room: RoomData;
@@ -153,6 +155,25 @@ export const RoomView: React.FC<RoomViewProps> = ({
   const [isManageDrawerOpen, setIsManageDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<'avatars' | 'poses'>('avatars');
   const [hudToast, setHudToast] = useState<string | null>(null);
+
+  // Room Likes State & Handler
+  const [likesCount, setLikesCount] = useState<number>(() => room.likesCount || 0);
+  const [isLiked, setIsLiked] = useState<boolean>(() => {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const likedIds = JSON.parse(localStorage.getItem('3d_social_liked_rooms') || '[]');
+        return likedIds.includes(room.id) || Boolean(room.isLiked);
+      } catch {}
+    }
+    return Boolean(room.isLiked);
+  });
+
+  const handleToggleLike = async () => {
+    const res = await toggleRoomLike(room.id, user?.id || 'guest');
+    setLikesCount(res.likesCount);
+    setIsLiked(res.isLiked);
+    showHudToast(res.isLiked ? '❤️ Você curtiu esta sala!' : '💔 Curtida desfeita.');
+  };
 
   const showHudToast = (msg: string) => {
     setHudToast(msg);
@@ -453,25 +474,41 @@ export const RoomView: React.FC<RoomViewProps> = ({
         </div>
       )}
 
-      {/* TOP BAR: Cube Icon | Lounge 3/8 | Orbit camera dropdown | Exit */}
-      <header className="absolute top-0 inset-x-0 z-30 flex items-center justify-between px-3 sm:px-6 py-2 sm:py-4 pointer-events-none gap-2">
-        <div className="flex items-center gap-2 sm:gap-3 pointer-events-auto min-w-0">
+      {/* TOP BAR: Cube Icon | Lounge 3/8 | Heart Like | Orbit camera dropdown | Exit */}
+      <header className="absolute top-0 inset-x-0 z-30 flex items-center justify-between px-2 sm:px-6 py-2 sm:py-3.5 pointer-events-none gap-2 max-w-full overflow-hidden">
+        <div className="flex items-center gap-1.5 sm:gap-3 pointer-events-auto min-w-0 flex-shrink">
           {/* Room Name & Cube Icon */}
-          <div className="flex items-center gap-2 text-white drop-shadow-md min-w-0">
-            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-[#ffd700]/15 border border-[#ffd700]/40 flex items-center justify-center text-[#ffd700] flex-shrink-0">
-              <Box className="w-4 h-4 sm:w-5 sm:h-5" />
+          <div className="flex items-center gap-1.5 sm:gap-2 text-white drop-shadow-md min-w-0">
+            <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-[#ffd700]/15 border border-[#ffd700]/40 flex items-center justify-center text-[#ffd700] flex-shrink-0">
+              <Box className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
             </div>
-            <h1 className="text-sm sm:text-xl font-bold tracking-tight flex items-baseline gap-1.5 text-white truncate">
-              <span className="truncate">{room.name || 'Lounge'}</span>
-              <span className="text-xs sm:text-sm font-normal text-zinc-400 flex-shrink-0">
+            <h1 className="text-xs sm:text-base md:text-xl font-bold tracking-tight flex items-baseline gap-1 text-white min-w-0">
+              <span className="truncate max-w-[70px] xs:max-w-[110px] sm:max-w-[180px] md:max-w-none">{room.name || 'Lounge'}</span>
+              <span className="text-[9px] sm:text-xs font-normal text-zinc-400 flex-shrink-0">
                 {room.occupation || '3/8'}
               </span>
             </h1>
           </div>
 
+          {/* Curtir / Like Button (ao lado do nome da room) */}
+          <button
+            id="room-header-like-btn"
+            type="button"
+            onClick={handleToggleLike}
+            className={`flex items-center gap-1 px-2 py-1 rounded-full border text-xs font-bold transition-all cursor-pointer flex-shrink-0 backdrop-blur-md ${
+              isLiked
+                ? 'bg-rose-500/25 border-rose-500/80 text-rose-300 shadow-[0_0_12px_rgba(244,63,94,0.4)]'
+                : 'bg-black/40 hover:bg-rose-500/15 border-white/10 hover:border-rose-400/50 text-zinc-300 hover:text-rose-300'
+            }`}
+            title={isLiked ? 'Você curtiu esta sala! Clique para descurtir' : 'Curtir esta sala'}
+          >
+            <Heart className={`w-3.5 h-3.5 transition-transform active:scale-125 ${isLiked ? 'fill-rose-500 text-rose-500' : 'text-zinc-400'}`} />
+            <span className="font-mono text-[11px]">{likesCount}</span>
+          </button>
+
           {/* Playtest Mode Badge */}
           {room.isPlaytest && (
-            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/60 text-emerald-300 text-xs font-semibold backdrop-blur-md shadow-[0_0_12px_rgba(16,185,129,0.3)]">
+            <div className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/60 text-emerald-300 text-[10px] sm:text-xs font-semibold backdrop-blur-md shadow-[0_0_12px_rgba(16,185,129,0.3)] flex-shrink-0">
               <span>🧪 TESTE</span>
             </div>
           )}
@@ -493,19 +530,19 @@ export const RoomView: React.FC<RoomViewProps> = ({
           </button>
 
           {/* Divider */}
-          <div className="hidden sm:block h-5 w-[1px] bg-white/20" />
+          <div className="hidden sm:block h-5 w-[1px] bg-white/20 flex-shrink-0" />
 
           {/* Orbit camera dropdown */}
-          <div className="relative">
+          <div className="relative flex-shrink-0">
             <button
               id="camera-mode-dropdown-btn"
               type="button"
               onClick={() => setShowCameraMenu(!showCameraMenu)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/40 hover:bg-black/60 border border-white/10 text-xs font-medium text-zinc-300 hover:text-white backdrop-blur-md transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg bg-black/40 hover:bg-black/60 border border-white/10 text-[11px] sm:text-xs font-medium text-zinc-300 hover:text-white backdrop-blur-md transition-colors cursor-pointer"
             >
-              <span className="w-2 h-2 rounded-full bg-cyan-400" />
-              <span className="capitalize">{cameraMode} camera</span>
-              <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
+              <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-cyan-400" />
+              <span className="capitalize">{cameraMode}</span>
+              <ChevronDown className="w-3 h-3 text-zinc-400" />
             </button>
 
             {showCameraMenu && (
@@ -534,7 +571,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
           </div>
 
           {/* Spot Switcher Pills */}
-          <div className="hidden lg:flex items-center gap-1.5 bg-black/30 border border-white/10 px-2 py-1 rounded-lg backdrop-blur-md text-[11px] text-zinc-300">
+          <div className="hidden lg:flex items-center gap-1.5 bg-black/30 border border-white/10 px-2 py-1 rounded-lg backdrop-blur-md text-[11px] text-zinc-300 flex-shrink-0">
             <span className="text-zinc-500 mr-1">Spot:</span>
             {spots.map((spot) => (
               <button
@@ -553,24 +590,31 @@ export const RoomView: React.FC<RoomViewProps> = ({
           </div>
         </div>
 
-        {/* Exit Button to return to Hall/Lobby or Editor */}
-        <div className="pointer-events-auto">
+        {/* Exit Button to return to Hall/Lobby or Editor (High z-index, never cut off!) */}
+        <div className="pointer-events-auto flex-shrink-0 z-40">
           <button
             id="exit-room-btn"
             type="button"
             onClick={onExitToLobby}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl border backdrop-blur-md transition-colors cursor-pointer text-xs font-semibold ${
+            className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-xl border backdrop-blur-md transition-colors cursor-pointer text-xs font-semibold shadow-lg ${
               room.isPlaytest
-                ? 'bg-emerald-950/60 hover:bg-emerald-900/80 border-emerald-500/50 text-emerald-300 hover:text-white shadow-[0_0_12px_rgba(16,185,129,0.3)]'
-                : 'bg-black/40 hover:bg-red-500/20 border-white/10 hover:border-red-500/40 text-zinc-300 hover:text-red-300'
+                ? 'bg-emerald-950/70 hover:bg-emerald-900 border-emerald-500/60 text-emerald-300 hover:text-white shadow-[0_0_12px_rgba(16,185,129,0.3)]'
+                : 'bg-black/60 hover:bg-red-500/25 border-white/20 hover:border-red-500/50 text-zinc-200 hover:text-red-300'
             }`}
             title={room.isPlaytest ? 'Voltar para o Modo Criador' : 'Sair da sala e voltar ao Hall de Portais'}
           >
-            <LogOut className={`w-4 h-4 ${room.isPlaytest ? 'rotate-180' : ''}`} />
-            <span>{room.isPlaytest ? 'Voltar ao Editor' : 'Voltar à Vitrine'}</span>
+            <LogOut className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${room.isPlaytest ? 'rotate-180' : ''}`} />
+            <span className="whitespace-nowrap">{room.isPlaytest ? 'Voltar' : 'Sair da Room'}</span>
           </button>
         </div>
       </header>
+
+      {/* FLOATING ROOM AUDIO PLAYER (Web Radio & Playlist MP3) */}
+      <RoomAudioPlayer
+        radioUrl={room.radioUrl || room.editorRoom?.radioUrl}
+        playlist={room.playlist || room.editorRoom?.playlist}
+        roomName={room.name || 'Lounge'}
+      />
 
       {/* TOP-LEFT HUD: 2D/3D Gizmo Widget with Setas & Spot Radius Clamping */}
       <div className="absolute top-20 left-3 sm:left-6 z-30 flex flex-col gap-2 pointer-events-auto">

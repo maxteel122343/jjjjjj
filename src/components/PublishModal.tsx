@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { CheckCircle2, X, Box, MapPin, Sparkles, Tag, Coins } from 'lucide-react';
-import { RoomEditorState, CreatorUser } from '../types';
+import React, { useState, useRef } from 'react';
+import { CheckCircle2, X, Box, MapPin, Sparkles, Tag, Coins, Radio, Music, Plus, Trash2 } from 'lucide-react';
+import { RoomEditorState, CreatorUser, AudioPlaylistItem } from '../types';
 import { persistShowcaseRoom } from '../lib/database';
 import { CoverImagePicker } from './CoverImagePicker';
 
@@ -28,7 +28,13 @@ export const PublishModal: React.FC<PublishModalProps> = ({
   const [roomCoverUrl, setRoomCoverUrl] = useState(
     'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80'
   );
+  const [roomRadioUrl, setRoomRadioUrl] = useState(
+    room.radioUrl || 'https://music.poprockenlinea.com/listen/poprock/radio.mp3'
+  );
+  const [roomPlaylist, setRoomPlaylist] = useState<AudioPlaylistItem[]>(room.playlist || []);
+  const [audioEnabled, setAudioEnabled] = useState<boolean>(room.audioEnabled ?? true);
   const [hasSaved, setHasSaved] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!isOpen) return null;
 
@@ -42,6 +48,9 @@ export const PublishModal: React.FC<PublishModalProps> = ({
       {
         ...room,
         name: roomTitle,
+        radioUrl: roomRadioUrl,
+        playlist: roomPlaylist,
+        audioEnabled,
       },
       user || null,
       {
@@ -49,10 +58,28 @@ export const PublishModal: React.FC<PublishModalProps> = ({
         price: publishMode === 'simples' ? 0 : Number(roomPrice) || 0,
         hashtags: tags.length > 0 ? tags : ['#sala', '#vitrine3d'],
         thumbnailUrl: roomCoverUrl,
+        radioUrl: roomRadioUrl,
+        playlist: roomPlaylist,
+        audioEnabled,
       }
     );
 
     setHasSaved(true);
+  };
+
+  const handleUploadLocalMp3 = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const fileUrl = URL.createObjectURL(file);
+    const fileName = file.name.replace(/\.[^/.]+$/, '');
+    const newTrack: AudioPlaylistItem = {
+      id: `mp3-${Date.now()}`,
+      title: fileName,
+      url: fileUrl,
+      artist: user?.displayName || 'Criador',
+      isRadio: false,
+    };
+    setRoomPlaylist((prev) => [...prev, newTrack]);
   };
 
   return (
@@ -217,6 +244,93 @@ export const PublishModal: React.FC<PublishModalProps> = ({
             </div>
           </div>
         )}
+
+        {/* Radio Link & MP3 Playlist Section (Available in both modes so user can set radio or songs!) */}
+        <div className="mb-4 p-3.5 bg-black/60 rounded-xl border border-[#d4af37]/40 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-amber-200">
+              <Radio className="w-4 h-4 text-[#ffd700]" />
+              <span>Rádio Web & Playlist da Sala</span>
+            </div>
+            <label className="flex items-center gap-1.5 text-[11px] text-zinc-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={audioEnabled}
+                onChange={(e) => setAudioEnabled(e.target.checked)}
+                className="accent-[#ffd700] rounded"
+              />
+              <span>Ativar Áudio</span>
+            </label>
+          </div>
+
+          <div>
+            <label className="block text-[11px] text-zinc-400 mb-1">
+              Link de Rádio Online (Exemplo Pop Rock ao vivo):
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={roomRadioUrl}
+                onChange={(e) => setRoomRadioUrl(e.target.value)}
+                placeholder="https://music.poprockenlinea.com/listen/poprock/radio.mp3"
+                className="flex-1 bg-[#1b1c24] border border-[#d4af37]/30 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-[#ffd700]"
+              />
+              <button
+                type="button"
+                onClick={() => setRoomRadioUrl('https://music.poprockenlinea.com/listen/poprock/radio.mp3')}
+                className="px-2.5 py-1.5 rounded-lg bg-[#ffd700]/15 hover:bg-[#ffd700]/30 border border-[#ffd700]/50 text-[#ffd700] text-[10px] font-bold cursor-pointer transition-colors"
+                title="Preencher com rádio Pop Rock de exemplo"
+              >
+                Pop/Rock Exemplo
+              </button>
+            </div>
+          </div>
+
+          {/* Subir MP3 para criar Playlist */}
+          <div className="pt-2 border-t border-white/10 flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <Music className="w-3.5 h-3.5 text-[#ffd700]" />
+              <span className="text-xs text-zinc-300">
+                Músicas da Playlist ({roomPlaylist.length})
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="px-2.5 py-1 bg-gradient-to-r from-amber-600/30 to-[#ffd700]/30 hover:from-amber-600/50 hover:to-[#ffd700]/50 border border-[#ffd700]/60 rounded-lg text-xs font-semibold text-[#ffd700] flex items-center gap-1 cursor-pointer transition-colors"
+            >
+              <Plus className="w-3 h-3" />
+              <span>Subir MP3</span>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="audio/mp3,audio/mpeg,audio/wav"
+              className="hidden"
+              onChange={handleUploadLocalMp3}
+            />
+          </div>
+
+          {roomPlaylist.length > 0 && (
+            <div className="max-h-24 overflow-y-auto space-y-1 custom-scrollbar pr-1">
+              {roomPlaylist.map((track, idx) => (
+                <div
+                  key={track.id}
+                  className="flex items-center justify-between px-2 py-1 rounded bg-black/40 text-[11px] text-zinc-300 border border-white/5"
+                >
+                  <span className="truncate">{idx + 1}. {track.title}</span>
+                  <button
+                    type="button"
+                    onClick={() => setRoomPlaylist((prev) => prev.filter((t) => t.id !== track.id))}
+                    className="text-zinc-500 hover:text-red-400 p-0.5"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Action Buttons */}
         <div className="flex flex-col sm:flex-row gap-2.5 pt-2 border-t border-[#d4af37]/20">

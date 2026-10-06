@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Users,
   Gift,
@@ -13,8 +13,12 @@ import {
   User,
   Shirt,
   LogOut,
+  Heart,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { RoomData, CreatorUser } from '../types';
+import { toggleRoomLike } from '../lib/database';
 
 interface LobbyViewProps {
   rooms: RoomData[];
@@ -45,7 +49,34 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   onOpenCustomization,
   onLogout,
 }) => {
-  const activeRoom = rooms[selectedRoomIndex] || rooms[1];
+  const activeRoom = rooms[selectedRoomIndex] || rooms[1] || rooms[0];
+
+  // Local likes tracking
+  const [likedRoomIds, setLikedRoomIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('3d_social_liked_rooms') || '[]');
+    } catch {
+      return [];
+    }
+  });
+  const [roomLikesMap, setRoomLikesMap] = useState<Record<string, number>>(() => {
+    const map: Record<string, number> = {};
+    rooms.forEach((r) => {
+      map[r.id] = r.likesCount ?? 0;
+    });
+    return map;
+  });
+
+  const handleLikeFromVitrine = async (roomId: string) => {
+    const res = await toggleRoomLike(roomId, user?.id || 'guest');
+    setLikedRoomIds((prev) =>
+      res.isLiked ? [...prev, roomId] : prev.filter((id) => id !== roomId)
+    );
+    setRoomLikesMap((prev) => ({
+      ...prev,
+      [roomId]: res.likesCount,
+    }));
+  };
 
   // We want to show 3 portals in perspective matching Reference 2:
   // Left: index 0, Center (highlighted): index 1, Right: index 2.
@@ -81,16 +112,16 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
 
       {/* TOP HUD matching Reference 2:
           Profile (Luzenne, Nv. 12, Level Bar) on left | Gold Coins, Gems, Login, Modo Criador on right */}
-      <header className="relative z-30 flex items-center justify-between px-8 pt-6 pointer-events-auto">
+      <header className="relative z-30 flex flex-wrap items-center justify-between px-3 sm:px-8 pt-3 sm:pt-6 pointer-events-auto gap-2">
         {/* Profile Card - clickable to open Auth/Profile */}
         <div
           onClick={onOpenAuthModal}
-          className="flex items-center gap-3 cursor-pointer group"
+          className="flex items-center gap-2 sm:gap-3 cursor-pointer group"
           title="Minha Conta / Login / Cadastrar"
         >
           {/* Avatar with Gold Ring */}
-          <div className="relative">
-            <div className="w-14 h-14 rounded-full bg-zinc-900 ring-2 ring-[#ffd700] ring-offset-2 ring-offset-black overflow-hidden shadow-[0_0_15px_rgba(255,215,0,0.3)] group-hover:ring-amber-300 transition-all">
+          <div className="relative flex-shrink-0">
+            <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-zinc-900 ring-2 ring-[#ffd700] ring-offset-2 ring-offset-black overflow-hidden shadow-[0_0_15px_rgba(255,215,0,0.3)] group-hover:ring-amber-300 transition-all">
               <img
                 src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80"
                 alt="Luzenne"
@@ -99,28 +130,28 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               />
             </div>
             {/* Ambient status indicator */}
-            <span className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-[#ffd700] border-2 border-black" />
+            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 sm:w-3.5 sm:h-3.5 rounded-full bg-[#ffd700] border-2 border-black" />
           </div>
 
           {/* Name, Level and Progress Bar */}
           <div className="flex flex-col">
-            <div className="flex items-baseline gap-2">
-              <span className="text-base font-bold text-zinc-100 tracking-wide group-hover:text-[#ffd700] transition-colors">
+            <div className="flex items-baseline gap-1.5 sm:gap-2">
+              <span className="text-xs sm:text-base font-bold text-zinc-100 tracking-wide group-hover:text-[#ffd700] transition-colors">
                 {user && !user.isGuest ? user.displayName : 'Luzenne'}
               </span>
-              <span className="text-xs text-amber-400 font-semibold">
+              <span className="text-[10px] sm:text-xs text-amber-400 font-semibold">
                 Nv. 12
               </span>
             </div>
             {/* Gold Progress Bar matching Reference 2 */}
-            <div className="flex items-center gap-2 mt-1">
-              <div className="w-28 h-1.5 rounded-full bg-black/60 border border-amber-900/40 overflow-hidden">
+            <div className="flex items-center gap-1.5 sm:gap-2 mt-0.5 sm:mt-1">
+              <div className="w-20 sm:w-28 h-1 sm:h-1.5 rounded-full bg-black/60 border border-amber-900/40 overflow-hidden">
                 <div
                   className="h-full bg-gradient-to-r from-amber-600 to-[#ffd700]"
                   style={{ width: '35%' }}
                 />
               </div>
-              <span className="text-[10px] text-zinc-400 font-mono">
+              <span className="text-[9px] sm:text-[10px] text-zinc-400 font-mono">
                 420 / 1200
               </span>
             </div>
@@ -238,7 +269,17 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
         </div>
 
         {/* 3D Perspective Portals Container */}
-        <div className="relative w-full max-w-5xl flex items-center justify-center gap-4 md:gap-8 perspective-[1200px] z-10 pt-2">
+        <div className="relative w-full max-w-5xl flex items-center justify-center gap-2 sm:gap-4 md:gap-8 perspective-[1200px] z-10 pt-2 px-2 sm:px-4">
+          {/* Mobile Previous Button */}
+          <button
+            type="button"
+            onClick={() => onSelectRoomIndex((selectedRoomIndex - 1 + rooms.length) % rooms.length)}
+            className="sm:hidden absolute left-1 z-30 p-2 rounded-full bg-black/70 border border-[#ffd700]/50 text-[#ffd700] cursor-pointer"
+            title="Sala anterior"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+
           {portalSlots.map((slot, i) => {
             const room = rooms[slot.index];
             const isCenter = slot.pos === 'center';
@@ -251,8 +292,8 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                 onClick={() => onSelectRoomIndex(slot.index)}
                 className={`relative transition-all duration-500 ease-out cursor-pointer group ${
                   isCenter
-                    ? 'w-72 md:w-80 z-20 scale-105 filter drop-shadow-[0_15px_35px_rgba(255,215,0,0.25)]'
-                    : 'w-60 md:w-64 opacity-75 hover:opacity-100 scale-95 z-10'
+                    ? 'w-[84vw] max-w-xs sm:w-72 md:w-80 z-20 scale-105 filter drop-shadow-[0_15px_35px_rgba(255,215,0,0.25)]'
+                    : 'hidden sm:block w-56 md:w-64 opacity-75 hover:opacity-100 scale-95 z-10'
                 }`}
                 style={{
                   transform: isLeft
@@ -277,11 +318,30 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                     <div className="px-3 py-2 bg-[#1a1714] border-b border-amber-900/40 flex items-center justify-between text-center">
                       <div className="flex items-center gap-1.5 text-xs font-serif font-bold tracking-wider text-amber-200 truncate">
                         <span className="text-amber-400">{room.badge || '👑'}</span>
-                        <span>{room.name}</span>
+                        <span className="truncate">{room.name}</span>
                       </div>
-                      <span className="text-[11px] font-mono text-amber-400/90 font-semibold ml-2">
-                        {room.occupation}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-shrink-0 ml-1">
+                        {/* Curtir pela Vitrine */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleLikeFromVitrine(room.id);
+                          }}
+                          className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-bold transition-all cursor-pointer ${
+                            likedRoomIds.includes(room.id)
+                              ? 'bg-rose-500/25 border-rose-500 text-rose-300 shadow-[0_0_8px_rgba(244,63,94,0.4)]'
+                              : 'bg-black/60 border-amber-900/60 text-zinc-400 hover:text-rose-400'
+                          }`}
+                          title={likedRoomIds.includes(room.id) ? 'Descurtir pela vitrine' : 'Curtir pela vitrine'}
+                        >
+                          <Heart className={`w-3 h-3 ${likedRoomIds.includes(room.id) ? 'fill-rose-500 text-rose-500' : 'text-zinc-400'}`} />
+                          <span>{roomLikesMap[room.id] ?? room.likesCount ?? 0}</span>
+                        </button>
+                        <span className="text-[11px] font-mono text-amber-400/90 font-semibold">
+                          {room.occupation}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Room 3D Perspective Preview Viewport */}
@@ -301,6 +361,13 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                         <div className="absolute top-2 left-2 z-10 px-2 py-0.5 rounded bg-[#ffd700] text-black text-[9px] font-extrabold uppercase tracking-wider shadow-lg flex items-center gap-1">
                           <span>✨</span>
                           <span>Criada no Editor</span>
+                        </div>
+                      )}
+
+                      {/* Radio Badge if Room has Audio */}
+                      {room.radioUrl && (
+                        <div className="absolute bottom-2 right-2 z-10 px-2 py-0.5 rounded-full bg-black/80 border border-[#ffd700]/50 text-[#ffd700] text-[9px] font-bold shadow-md flex items-center gap-1">
+                          <span>📻 Rádio</span>
                         </div>
                       )}
 
@@ -330,6 +397,16 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               </div>
             );
           })}
+
+          {/* Mobile Next Button */}
+          <button
+            type="button"
+            onClick={() => onSelectRoomIndex((selectedRoomIndex + 1) % rooms.length)}
+            className="sm:hidden absolute right-1 z-30 p-2 rounded-full bg-black/70 border border-[#ffd700]/50 text-[#ffd700] cursor-pointer"
+            title="Próxima sala"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
         </div>
 
         {/* PROMINENT "ENTRAR" BUTTON matching Reference 2
@@ -377,18 +454,18 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
       {/* BOTTOM HUD matching Reference 2:
           Left: AMIGOS, EVENTOS, MENSAGENS, LOJA, plus UPLOAD 3D
           Right: CHAT, AVISOS */}
-      <footer className="relative z-30 flex items-end justify-between px-8 pb-6 pointer-events-auto">
+      <footer className="relative z-30 flex items-center justify-between px-2 sm:px-8 pb-2 sm:pb-6 pointer-events-auto max-w-full overflow-x-auto no-scrollbar gap-1.5 sm:gap-3">
         {/* Left Shortcuts */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
           {/* Amigos */}
           <button
             id="nav-amigos-btn"
             type="button"
             onClick={onOpenFriends}
-            className="flex flex-col items-center justify-center w-14 h-14 rounded-xl bg-black/60 hover:bg-amber-500/10 border border-amber-500/30 hover:border-amber-400 text-amber-400 transition-all cursor-pointer group"
+            className="flex flex-col items-center justify-center w-11 h-11 sm:w-14 sm:h-14 rounded-lg sm:rounded-xl bg-black/60 hover:bg-amber-500/10 border border-amber-500/30 hover:border-amber-400 text-amber-400 transition-all cursor-pointer group flex-shrink-0"
           >
-            <Users className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            <span className="text-[9px] font-bold tracking-wider mt-1 text-amber-200">
+            <Users className="w-4 h-4 sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
+            <span className="text-[7.5px] sm:text-[9px] font-bold tracking-wider mt-0.5 sm:mt-1 text-amber-200">
               AMIGOS
             </span>
           </button>
@@ -396,11 +473,11 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           {/* Eventos */}
           <button
             type="button"
-            className="relative flex flex-col items-center justify-center w-14 h-14 rounded-xl bg-black/60 hover:bg-amber-500/10 border border-amber-500/30 hover:border-amber-400 text-amber-400 transition-all cursor-pointer group"
+            className="relative flex flex-col items-center justify-center w-11 h-11 sm:w-14 sm:h-14 rounded-lg sm:rounded-xl bg-black/60 hover:bg-amber-500/10 border border-amber-500/30 hover:border-amber-400 text-amber-400 transition-all cursor-pointer group flex-shrink-0"
           >
-            <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_6px_#f59e0b]" />
-            <Gift className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            <span className="text-[9px] font-bold tracking-wider mt-1 text-amber-200">
+            <span className="absolute top-1 right-1.5 w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-amber-400 shadow-[0_0_6px_#f59e0b]" />
+            <Gift className="w-4 h-4 sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
+            <span className="text-[7.5px] sm:text-[9px] font-bold tracking-wider mt-0.5 sm:mt-1 text-amber-200">
               EVENTOS
             </span>
           </button>
@@ -408,10 +485,10 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           {/* Mensagens */}
           <button
             type="button"
-            className="flex flex-col items-center justify-center w-14 h-14 rounded-xl bg-black/60 hover:bg-amber-500/10 border border-amber-500/30 hover:border-amber-400 text-amber-400 transition-all cursor-pointer group"
+            className="flex flex-col items-center justify-center w-11 h-11 sm:w-14 sm:h-14 rounded-lg sm:rounded-xl bg-black/60 hover:bg-amber-500/10 border border-amber-500/30 hover:border-amber-400 text-amber-400 transition-all cursor-pointer group flex-shrink-0"
           >
-            <Mail className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            <span className="text-[9px] font-bold tracking-wider mt-1 text-amber-200">
+            <Mail className="w-4 h-4 sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
+            <span className="text-[7.5px] sm:text-[9px] font-bold tracking-wider mt-0.5 sm:mt-1 text-amber-200">
               MENSAGENS
             </span>
           </button>
@@ -421,11 +498,11 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             id="nav-loja-btn"
             type="button"
             onClick={onOpenShop}
-            className="flex flex-col items-center justify-center w-14 h-14 rounded-xl bg-black/60 hover:bg-amber-500/10 border border-amber-500/30 hover:border-amber-400 text-amber-400 transition-all cursor-pointer group"
+            className="flex flex-col items-center justify-center w-11 h-11 sm:w-14 sm:h-14 rounded-lg sm:rounded-xl bg-black/60 hover:bg-amber-500/10 border border-amber-500/30 hover:border-amber-400 text-amber-400 transition-all cursor-pointer group flex-shrink-0"
             title="Abrir Loja de Avatares e Itens"
           >
-            <ShoppingBag className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            <span className="text-[9px] font-bold tracking-wider mt-1 text-amber-200">
+            <ShoppingBag className="w-4 h-4 sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
+            <span className="text-[7.5px] sm:text-[9px] font-bold tracking-wider mt-0.5 sm:mt-1 text-amber-200">
               LOJA
             </span>
           </button>
@@ -436,40 +513,40 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               id="nav-personalizar-btn"
               type="button"
               onClick={onOpenCustomization}
-              className="flex flex-col items-center justify-center w-14 h-14 rounded-xl bg-black/60 hover:bg-[#d4af37]/20 border border-[#d4af37]/40 hover:border-[#ffd700] text-[#ffd700] transition-all cursor-pointer group"
+              className="flex flex-col items-center justify-center w-11 h-11 sm:w-14 sm:h-14 rounded-lg sm:rounded-xl bg-black/60 hover:bg-[#d4af37]/20 border border-[#d4af37]/40 hover:border-[#ffd700] text-[#ffd700] transition-all cursor-pointer group flex-shrink-0"
               title="Personalização do Usuário (Inventário e Poses)"
             >
-              <Shirt className="w-5 h-5 group-hover:scale-110 transition-transform" />
-              <span className="text-[9px] font-bold tracking-wider mt-1 text-[#ffd700]">
+              <Shirt className="w-4 h-4 sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
+              <span className="text-[7.5px] sm:text-[9px] font-bold tracking-wider mt-0.5 sm:mt-1 text-[#ffd700]">
                 VISUAL
               </span>
             </button>
           )}
 
-          {/* Upload 3D - Direct entry to 3D pipeline required in prompt! */}
+          {/* Upload 3D */}
           <button
             id="nav-upload-3d-btn"
             type="button"
             onClick={onOpenUpload}
-            className="flex flex-col items-center justify-center w-14 h-14 rounded-xl bg-gradient-to-t from-amber-950/70 to-black/80 hover:from-amber-900/80 border border-[#ffd700]/60 hover:border-[#ffd700] text-[#ffd700] transition-all cursor-pointer group shadow-[0_0_15px_rgba(255,215,0,0.2)]"
+            className="flex flex-col items-center justify-center w-11 h-11 sm:w-14 sm:h-14 rounded-lg sm:rounded-xl bg-gradient-to-t from-amber-950/70 to-black/80 hover:from-amber-900/80 border border-[#ffd700]/60 hover:border-[#ffd700] text-[#ffd700] transition-all cursor-pointer group shadow-[0_0_15px_rgba(255,215,0,0.2)] flex-shrink-0"
             title="Upload de Arquivo 3D (GLB/GLTF)"
           >
-            <UploadCloud className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            <span className="text-[9px] font-bold tracking-wider mt-1 text-amber-300">
+            <UploadCloud className="w-4 h-4 sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
+            <span className="text-[7.5px] sm:text-[9px] font-bold tracking-wider mt-0.5 sm:mt-1 text-amber-300">
               UPLOAD 3D
             </span>
           </button>
         </div>
 
         {/* Right Shortcuts */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
           {/* Chat */}
           <button
             type="button"
-            className="flex flex-col items-center justify-center w-14 h-14 rounded-xl bg-black/60 hover:bg-amber-500/10 border border-amber-500/30 hover:border-amber-400 text-amber-400 transition-all cursor-pointer group"
+            className="flex flex-col items-center justify-center w-11 h-11 sm:w-14 sm:h-14 rounded-lg sm:rounded-xl bg-black/60 hover:bg-amber-500/10 border border-amber-500/30 hover:border-amber-400 text-amber-400 transition-all cursor-pointer group flex-shrink-0"
           >
-            <MessageSquare className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            <span className="text-[9px] font-bold tracking-wider mt-1 text-amber-200">
+            <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
+            <span className="text-[7.5px] sm:text-[9px] font-bold tracking-wider mt-0.5 sm:mt-1 text-amber-200">
               CHAT
             </span>
           </button>
@@ -477,10 +554,10 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           {/* Avisos */}
           <button
             type="button"
-            className="flex flex-col items-center justify-center w-14 h-14 rounded-xl bg-black/60 hover:bg-amber-500/10 border border-amber-500/30 hover:border-amber-400 text-amber-400 transition-all cursor-pointer group"
+            className="flex flex-col items-center justify-center w-11 h-11 sm:w-14 sm:h-14 rounded-lg sm:rounded-xl bg-black/60 hover:bg-amber-500/10 border border-amber-500/30 hover:border-amber-400 text-amber-400 transition-all cursor-pointer group flex-shrink-0"
           >
-            <Bell className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            <span className="text-[9px] font-bold tracking-wider mt-1 text-amber-200">
+            <Bell className="w-4 h-4 sm:w-5 sm:h-5 group-hover:scale-110 transition-transform" />
+            <span className="text-[7.5px] sm:text-[9px] font-bold tracking-wider mt-0.5 sm:mt-1 text-amber-200">
               AVISOS
             </span>
           </button>

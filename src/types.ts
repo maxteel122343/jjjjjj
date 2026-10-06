@@ -128,6 +128,15 @@ export interface PlayableBoundary {
   isConfirmed: boolean;
 }
 
+export interface AudioPlaylistItem {
+  id: string;
+  title: string;
+  url: string; // HTTP(S) stream URL or uploaded audio blob/data url
+  artist?: string;
+  duration?: number;
+  isRadio?: boolean;
+}
+
 export interface RoomEditorState {
   id: string;
   name: string;
@@ -139,6 +148,10 @@ export interface RoomEditorState {
   isPublished: boolean;
   publishedAt?: string;
   isMissingAsset?: boolean;
+  radioUrl?: string; // e.g. "https://music.poprockenlinea.com/listen/poprock/radio.mp3"
+  playlist?: AudioPlaylistItem[];
+  audioEnabled?: boolean;
+  audioAutoplay?: boolean;
 }
 
 export interface CreatorUser {
@@ -238,6 +251,12 @@ export interface RoomData {
   isPlaytest?: boolean;
   assetId?: string;
   isMissingAsset?: boolean;
+  radioUrl?: string;
+  playlist?: AudioPlaylistItem[];
+  audioEnabled?: boolean;
+  audioAutoplay?: boolean;
+  likesCount?: number;
+  isLiked?: boolean;
 }
 
 export interface ChatMessage {

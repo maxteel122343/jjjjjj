@@ -44,8 +44,8 @@ import {
   RoomAccessSlot,
 } from './types';
 import { supabase } from './lib/supabase';
-import { persistStoreItem, persistShowcaseRoom, fetchPublicStoreItems, fetchPublicShowcaseRooms, recordUserInventoryItem } from './lib/database';
-import { getGlbFile, saveGlbFile, deleteGlbFile } from './lib/storageIndexedDB';
+import { persistStoreItem, persistShowcaseRoom, fetchPublicStoreItems, fetchPublicShowcaseRooms, recordUserInventoryItem, deleteRemoteInventoryItem, clearAllRemoteInventory } from './lib/database';
+import { getGlbFile, saveGlbFile, deleteGlbFile, clearAllGlbFiles } from './lib/storageIndexedDB';
 import { safeLocalStorageSet, sanitizeItemsForStorage } from './lib/storageUtils';
 import { fetchRemoteInventory } from './lib/assetSyncClient';
 import { Lightbulb, Sparkles, Maximize2, Minimize2 } from 'lucide-react';
@@ -165,8 +165,17 @@ export const App: React.FC = () => {
     }
   }, [currentScreen]);
 
-  // Inventory State (GLB files uploaded) - vem EXCLUSIVAMENTE de GET /api/v1/inventory
-  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  // Inventory State (GLB files uploaded) - persiste localmente e sincroniza com backend
+  const [inventory, setInventory] = useState<InventoryItem[]>(() => {
+    const saved = localStorage.getItem('3d_social_creator_inventory');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {}
+    }
+    return [];
+  });
 
   // User Auth State
   const [user, setUser] = useState<CreatorUser | null>(() => {
@@ -545,11 +554,10 @@ export const App: React.FC = () => {
   }, [inventory]);
 
   useEffect(() => {
-    // Purge any old local inventory keys so UI is strictly sourced from GET /inventory
-    try {
-      localStorage.removeItem('3d_social_creator_inventory');
-    } catch {}
-  }, []);
+    if (inventory) {
+      safeLocalStorageSet('3d_social_creator_inventory', JSON.stringify(sanitizeItemsForStorage(inventory)));
+    }
+  }, [inventory]);
 
   useEffect(() => {
     safeLocalStorageSet('3d_social_creator_customization_items', JSON.stringify(sanitizeItemsForStorage(customizationItems)));
@@ -1191,14 +1199,16 @@ export const App: React.FC = () => {
     showToast(`Objeto renomeado para "${trimmed}"`);
   };
 
-  // Delete inventory item (including binary GLB from IndexedDB)
+  // Delete inventory item (including binary GLB from IndexedDB and remote database)
   const handleDeleteInventoryItem = async (itemId: string) => {
     const itemToRemove = inventory.find((i) => i.id === itemId);
-    // 1. Delete binary from IndexedDB
+    // 1. Delete from remote API database
+    await deleteRemoteInventoryItem(itemId);
+    // 2. Delete binary from IndexedDB
     await deleteGlbFile(itemId);
-    // 2. Remove from inventory
+    // 3. Remove from inventory
     setInventory((prev) => prev.filter((i) => i.id !== itemId));
-    // 3. Clear from rooms if currently used as scenario or placed object
+    // 4. Clear from rooms if currently used as scenario or placed object
     setRooms((prev) =>
       prev.map((room) => ({
         ...room,
@@ -1207,7 +1217,44 @@ export const App: React.FC = () => {
         placedObjects: room.placedObjects.filter((o) => o.assetId !== itemId),
       }))
     );
-    showToast(`Arquivo "${itemToRemove?.displayName || 'Item'}" excluído do inventário com sucesso.`);
+    showToast(`Arquivo "${itemToRemove?.displayName || 'Item'}" excluído com sucesso.`);
+  };
+
+  // Delete multiple selected inventory items
+  const handleDeleteMultipleInventoryItems = async (itemIds: string[]) => {
+    if (!itemIds || itemIds.length === 0) return;
+    for (const id of itemIds) {
+      await deleteRemoteInventoryItem(id);
+      await deleteGlbFile(id);
+    }
+    const idSet = new Set(itemIds);
+    setInventory((prev) => prev.filter((i) => !idSet.has(i.id)));
+    setRooms((prev) =>
+      prev.map((room) => ({
+        ...room,
+        sceneAssetId: room.sceneAssetId && idSet.has(room.sceneAssetId) ? null : room.sceneAssetId,
+        sceneAssetBlobUrl: room.sceneAssetId && idSet.has(room.sceneAssetId) ? undefined : room.sceneAssetBlobUrl,
+        placedObjects: room.placedObjects.filter((o) => !o.assetId || !idSet.has(o.assetId)),
+      }))
+    );
+    showToast(`${itemIds.length} arquivos selecionados foram excluídos com sucesso.`);
+  };
+
+  // Clear all inventory items
+  const handleClearAllInventory = async () => {
+    await clearAllRemoteInventory(user?.id);
+    await clearAllGlbFiles();
+    setInventory([]);
+    setRooms((prev) =>
+      prev.map((room) => ({
+        ...room,
+        sceneAssetId: null,
+        sceneAssetBlobUrl: undefined,
+        placedObjects: room.placedObjects.filter((o) => !o.assetId),
+      }))
+    );
+    safeLocalStorageSet('3d_social_creator_inventory', JSON.stringify([]));
+    showToast('Todo o inventário foi limpo com sucesso.');
   };
 
   // Restore project from imported .json / .3dproj package
@@ -2491,6 +2538,8 @@ export const App: React.FC = () => {
             onRenameInventoryItem={handleRenameInventoryItem}
             onRenamePlacedObject={handleRenamePlacedObject}
             onDeleteInventoryItem={handleDeleteInventoryItem}
+            onDeleteMultipleInventoryItems={handleDeleteMultipleInventoryItems}
+            onClearAllInventory={handleClearAllInventory}
             onOpenProjectModal={() => setIsProjectModalOpen(true)}
             onAddSpotAtObject={handleAddSpotAtObject}
             onStartSurfaceSnap={handleStartSurfaceSnap}

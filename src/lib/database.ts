@@ -189,6 +189,9 @@ export async function persistShowcaseRoom(
     price?: number;
     hashtags?: string[];
     thumbnailUrl?: string;
+    radioUrl?: string;
+    playlist?: any[];
+    audioEnabled?: boolean;
   }
 ): Promise<{ success: boolean; id: string; error?: string }> {
   let roomId = room.id && room.id.includes('-') && room.id.length === 36
@@ -211,6 +214,10 @@ export async function persistShowcaseRoom(
     };
   });
 
+  const finalRadioUrl = options?.radioUrl || room.radioUrl || 'https://music.poprockenlinea.com/listen/poprock/radio.mp3';
+  const finalPlaylist = options?.playlist || room.playlist || [];
+  const finalAudioEnabled = options?.audioEnabled !== undefined ? options.audioEnabled : (room.audioEnabled ?? true);
+
   const showcaseRoomEntry = {
     id: roomId,
     name: room.name,
@@ -229,11 +236,18 @@ export async function persistShowcaseRoom(
       placedObjects: cleanedPlacedObjects,
       isPublished: true,
       isMissingAsset: !sceneAssetId,
+      radioUrl: finalRadioUrl,
+      playlist: finalPlaylist,
+      audioEnabled: finalAudioEnabled,
     },
     assetId: sceneAssetId || undefined,
     isMissingAsset: !sceneAssetId,
     price: options?.price || 0,
     publishMode: options?.publishMode || 'simples',
+    radioUrl: finalRadioUrl,
+    playlist: finalPlaylist,
+    audioEnabled: finalAudioEnabled,
+    likesCount: 0,
   };
 
   // 1. Sync to Supabase (works for logged-in or guest users)
@@ -259,6 +273,9 @@ export async function persistShowcaseRoom(
       asset_id: sceneAssetId || null,
       model_url: sceneAssetId || null, // Guarda o UUID, nunca download_url expirada!
       is_published: true,
+      radio_url: finalRadioUrl,
+      audio_playlist: finalPlaylist,
+      audio_enabled: finalAudioEnabled,
     };
 
     const { data: insertedData, error: insertError } = await supabase
@@ -575,6 +592,12 @@ export async function fetchPublicShowcaseRooms(): Promise<any[]> {
           (row.id?.startsWith('00000000') ||
             ['SALA SERENA', 'SALÃO ESCARLATE', 'SALA DE SINUCA'].includes(row.name));
 
+        const localLikesRaw = typeof localStorage !== 'undefined' ? localStorage.getItem('3d_social_liked_rooms') : null;
+        let likedIds: string[] = [];
+        try {
+          likedIds = localLikesRaw ? JSON.parse(localLikesRaw) : [];
+        } catch {}
+
         return {
           id: row.id,
           name: row.name || row.title || 'Sala 3D',
@@ -590,6 +613,11 @@ export async function fetchPublicShowcaseRooms(): Promise<any[]> {
           publishMode: row.publish_mode || 'simples',
           assetId: extractedSceneUuid || undefined,
           isMissingAsset: !extractedSceneUuid && !isPresetArchitecture,
+          radioUrl: row.radio_url || 'https://music.poprockenlinea.com/listen/poprock/radio.mp3',
+          playlist: Array.isArray(row.audio_playlist) ? row.audio_playlist : [],
+          audioEnabled: row.audio_enabled !== undefined ? row.audio_enabled : true,
+          likesCount: Number(row.likes_count) || 0,
+          isLiked: likedIds.includes(row.id),
           editorRoom: {
             id: row.id,
             name: row.name || row.title || 'Sala 3D',
@@ -600,6 +628,9 @@ export async function fetchPublicShowcaseRooms(): Promise<any[]> {
             boundary: row.boundary || { x: 8, y: 3, z: 8, isConfirmed: true },
             isPublished: true,
             isMissingAsset: !extractedSceneUuid && !isPresetArchitecture,
+            radioUrl: row.radio_url || 'https://music.poprockenlinea.com/listen/poprock/radio.mp3',
+            playlist: Array.isArray(row.audio_playlist) ? row.audio_playlist : [],
+            audioEnabled: row.audio_enabled !== undefined ? row.audio_enabled : true,
           },
         };
       });
@@ -610,6 +641,100 @@ export async function fetchPublicShowcaseRooms(): Promise<any[]> {
     console.warn('Supabase fetchPublicShowcaseRooms error:', err?.message);
   }
   return [];
+}
+
+/**
+ * Toggle like for a showcase room (persists to Supabase, localStorage, and updates like count).
+ */
+export async function toggleRoomLike(
+  roomId: string,
+  userIdentifier: string = 'guest'
+): Promise<{ success: boolean; likesCount: number; isLiked: boolean }> {
+  const localLikesKey = '3d_social_liked_rooms';
+  let likedRooms: string[] = [];
+  try {
+    const raw = localStorage.getItem(localLikesKey);
+    likedRooms = raw ? JSON.parse(raw) : [];
+  } catch {}
+
+  const alreadyLiked = likedRooms.includes(roomId);
+  const nextIsLiked = !alreadyLiked;
+
+  if (nextIsLiked) {
+    likedRooms.push(roomId);
+  } else {
+    likedRooms = likedRooms.filter((id) => id !== roomId);
+  }
+  localStorage.setItem(localLikesKey, JSON.stringify(likedRooms));
+
+  let newCount = 0;
+  try {
+    const { data } = await supabase.from('showcase_rooms').select('likes_count').eq('id', roomId).single();
+    const current = Number(data?.likes_count) || 0;
+    newCount = Math.max(0, nextIsLiked ? current + 1 : current - 1);
+    await supabase.from('showcase_rooms').update({ likes_count: newCount }).eq('id', roomId);
+
+    if (nextIsLiked) {
+      await supabase.from('room_likes').insert([{ room_id: roomId, user_identifier: userIdentifier }]).catch(() => {});
+    } else {
+      await supabase.from('room_likes').delete().eq('room_id', roomId).eq('user_identifier', userIdentifier).catch(() => {});
+    }
+  } catch (err) {
+    console.warn('Supabase toggleRoomLike fallback:', err);
+  }
+
+  // Also update local showcase rooms cache
+  try {
+    const saved = localStorage.getItem('3d_social_creator_lobby_rooms');
+    if (saved) {
+      const list = JSON.parse(saved);
+      const updated = list.map((r: any) => {
+        if (r.id === roomId) {
+          const count = Number(r.likesCount ?? r.likes_count ?? 0);
+          return {
+            ...r,
+            likesCount: Math.max(0, nextIsLiked ? count + 1 : count - 1),
+            isLiked: nextIsLiked,
+          };
+        }
+        return r;
+      });
+      localStorage.setItem('3d_social_creator_lobby_rooms', JSON.stringify(updated));
+    }
+  } catch {}
+
+  return { success: true, likesCount: newCount, isLiked: nextIsLiked };
+}
+
+/**
+ * Delete a specific user uploaded inventory item from database & backend.
+ */
+export async function deleteRemoteInventoryItem(assetIdOrItemId: string): Promise<boolean> {
+  try {
+    await fetch(`/api/v1/inventory/${encodeURIComponent(assetIdOrItemId)}`, {
+      method: 'DELETE',
+    });
+    return true;
+  } catch (e) {
+    console.warn('API delete inventory item fallback:', e);
+    return false;
+  }
+}
+
+/**
+ * Clear all uploaded inventory items for the user from database & backend.
+ */
+export async function clearAllRemoteInventory(userId?: string): Promise<boolean> {
+  try {
+    await fetch('/api/v1/inventory/clear-all', {
+      method: 'DELETE',
+      headers: userId ? { 'x-user-id': userId } : {},
+    });
+    return true;
+  } catch (e) {
+    console.warn('API clear all inventory fallback:', e);
+    return false;
+  }
 }
 
 /**

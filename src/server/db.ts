@@ -229,6 +229,26 @@ function createMockPool() {
       return { rows: found ? [{ id: found.id }] : [] };
     }
 
+    // 11. DELETE FROM public.inventory_items
+    if (upperText.includes('DELETE FROM PUBLIC.INVENTORY_ITEMS')) {
+      if (params.length === 2) {
+        const [targetId, userId] = params;
+        for (const [key, item] of mockInventoryItems.entries()) {
+          if ((item.id === targetId || item.asset_id === targetId) && item.user_id === userId) {
+            mockInventoryItems.delete(key);
+          }
+        }
+      } else if (params.length === 1) {
+        const [userId] = params;
+        for (const [key, item] of mockInventoryItems.entries()) {
+          if (item.user_id === userId) {
+            mockInventoryItems.delete(key);
+          }
+        }
+      }
+      return { rows: [] };
+    }
+
     return { rows: [] };
   };
 

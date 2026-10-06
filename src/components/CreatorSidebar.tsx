@@ -79,6 +79,8 @@ interface CreatorSidebarProps {
   onRenameInventoryItem?: (id: string, newName: string) => void;
   onRenamePlacedObject?: (id: string, newName: string) => void;
   onDeleteInventoryItem?: (itemId: string) => void;
+  onDeleteMultipleInventoryItems?: (itemIds: string[]) => void;
+  onClearAllInventory?: () => void;
   onOpenProjectModal?: () => void;
   onAddSpotAtObject?: (objectId: string) => void;
   onStartSurfaceSnap?: (objectId?: string | null) => void;
@@ -145,6 +147,8 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
   onRenameInventoryItem,
   onRenamePlacedObject,
   onDeleteInventoryItem,
+  onDeleteMultipleInventoryItems,
+  onClearAllInventory,
   onOpenProjectModal,
   onAddSpotAtObject,
   onStartSurfaceSnap,
@@ -170,6 +174,11 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
   const [isAddingSpot, setIsAddingSpot] = useState(false);
   const [newSpotType, setNewSpotType] = useState<SpotType>('sentar');
   const [newSpotName, setNewSpotName] = useState('');
+
+  // Inventory Selection & Batch Deletion States
+  const [selectedInventoryIds, setSelectedInventoryIds] = useState<string[]>([]);
+  const [showClearAllModal, setShowClearAllModal] = useState<boolean>(false);
+  const [showDeleteSelectedModal, setShowDeleteSelectedModal] = useState<boolean>(false);
 
   // Action creation / edit states
   const [actionTargetId, setActionTargetId] = useState<string | null>(null);
@@ -2293,11 +2302,53 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
           <button
             type="button"
             onClick={onOpenUploadModal}
-            className="w-full py-2.5 px-3 rounded-lg border border-[#d4af37] hover:border-[#ffd700] bg-[#d4af37]/10 hover:bg-[#d4af37]/20 text-xs font-semibold text-[#ffd700] flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm mb-3"
+            className="w-full py-2.5 px-3 rounded-lg border border-[#d4af37] hover:border-[#ffd700] bg-[#d4af37]/10 hover:bg-[#d4af37]/20 text-xs font-semibold text-[#ffd700] flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm mb-2"
           >
             <Upload className="w-3.5 h-3.5" />
             <span>Enviar arquivo (GLB)</span>
           </button>
+
+          {/* Batch Actions: Limpar Todos & Excluir Selecionados */}
+          {inventory.length > 0 && (
+            <div className="flex items-center gap-1.5 mb-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedInventoryIds.length === inventory.length) {
+                    setSelectedInventoryIds([]);
+                  } else {
+                    setSelectedInventoryIds(inventory.map((i) => i.id));
+                  }
+                }}
+                className="py-1 px-2 rounded-lg bg-black/60 border border-[#d4af37]/40 text-[10px] text-zinc-300 hover:text-white cursor-pointer transition-colors"
+                title="Selecionar todos os arquivos"
+              >
+                {selectedInventoryIds.length === inventory.length ? 'Desmarcar' : 'Selecionar Todos'}
+              </button>
+
+              {selectedInventoryIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteSelectedModal(true)}
+                  className="flex-1 py-1 px-2 rounded-lg bg-red-950/70 border border-red-500/60 hover:bg-red-900/80 text-red-200 text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                  title="Excluir apenas os arquivos selecionados"
+                >
+                  <Trash2 className="w-3 h-3 text-red-400" />
+                  <span>Excluir ({selectedInventoryIds.length})</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowClearAllModal(true)}
+                className="py-1 px-2 rounded-lg bg-red-950/40 hover:bg-red-900/60 border border-red-500/30 hover:border-red-500/60 text-red-300 text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                title="Limpar todos os arquivos do inventário"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>Limpar Todos</span>
+              </button>
+            </div>
+          )}
 
           {/* Drag & Drop Guidance Banner */}
           <div className="p-2 mb-2 rounded-lg border border-[#d4af37]/30 bg-[#d4af37]/10 text-[10px] text-[#ffd700] flex items-center gap-1.5">
@@ -2325,10 +2376,30 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                   e.dataTransfer.setData('application/json', JSON.stringify(item));
                   e.dataTransfer.effectAllowed = 'copy';
                 }}
-                className="group p-2.5 rounded-lg border border-[#d4af37]/30 hover:border-[#ffd700] bg-black/40 hover:bg-black/60 transition-all flex flex-col gap-2 cursor-grab active:cursor-grabbing hover:shadow-[0_0_12px_rgba(212,175,55,0.15)]"
+                className={`group p-2.5 rounded-lg border transition-all flex flex-col gap-2 cursor-grab active:cursor-grabbing hover:shadow-[0_0_12px_rgba(212,175,55,0.15)] ${
+                  selectedInventoryIds.includes(item.id)
+                    ? 'border-[#ffd700] bg-[#ffd700]/10'
+                    : 'border-[#d4af37]/30 hover:border-[#ffd700] bg-black/40 hover:bg-black/60'
+                }`}
                 title="Clique e arraste para o cenário 3D ou clique no botão abaixo"
               >
                 <div className="flex items-center gap-2.5">
+                  {/* Selection Checkbox */}
+                  <input
+                    type="checkbox"
+                    checked={selectedInventoryIds.includes(item.id)}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      if (e.target.checked) {
+                        setSelectedInventoryIds((prev) => [...prev, item.id]);
+                      } else {
+                        setSelectedInventoryIds((prev) => prev.filter((id) => id !== item.id));
+                      }
+                    }}
+                    className="accent-[#ffd700] w-3.5 h-3.5 rounded cursor-pointer"
+                    title="Selecionar para exclusão"
+                  />
+
                   <div className="w-12 h-10 rounded border border-[#d4af37]/40 bg-[#16181e] overflow-hidden flex-shrink-0 flex items-center justify-center">
                     {item.thumbUrl ? (
                       <img
@@ -2497,6 +2568,96 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>Sim, Excluir</span>
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Delete selected items confirmation modal */}
+          {showDeleteSelectedModal && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 animate-fade-in"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-[#15161c] border border-red-500/50 rounded-2xl p-5 max-w-sm w-full text-center space-y-4 shadow-2xl">
+                <div className="w-12 h-12 rounded-full bg-red-950/60 border border-red-500/50 text-red-400 flex items-center justify-center mx-auto">
+                  <Trash2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                    Excluir {selectedInventoryIds.length} arquivos selecionados?
+                  </h3>
+                  <p className="text-xs text-zinc-300 mt-1">
+                    Esta ação removerá permanentemente os itens selecionados da sua conta e do banco de dados.
+                  </p>
+                </div>
+                <div className="flex gap-2 justify-center pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteSelectedModal(false)}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-zinc-400 hover:text-white bg-zinc-800/80 hover:bg-zinc-700 cursor-pointer transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDeleteMultipleInventoryItems?.(selectedInventoryIds);
+                      setSelectedInventoryIds([]);
+                      setShowDeleteSelectedModal(false);
+                    }}
+                    className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-red-600 hover:bg-red-500 cursor-pointer transition-colors flex items-center gap-1.5 shadow-lg shadow-red-900/30"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Excluir Selecionados</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Clear all items confirmation modal */}
+          {showClearAllModal && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 animate-fade-in"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-[#15161c] border border-red-500/70 rounded-2xl p-5 max-w-sm w-full text-center space-y-4 shadow-2xl">
+                <div className="w-12 h-12 rounded-full bg-red-950/80 border border-red-500/60 text-red-400 flex items-center justify-center mx-auto">
+                  <AlertTriangle className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                    Limpar Todos os Uploads?
+                  </h3>
+                  <p className="text-xs text-zinc-300 mt-1">
+                    Tem certeza que deseja apagar <strong className="text-red-400">TODOS os {inventory.length} modelos</strong> do inventário e do armazenamento? Essa ação não pode ser desfeita.
+                  </p>
+                </div>
+                <div className="flex gap-2 justify-center pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowClearAllModal(false)}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-zinc-400 hover:text-white bg-zinc-800/80 hover:bg-zinc-700 cursor-pointer transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClearAllInventory?.();
+                      setSelectedInventoryIds([]);
+                      setShowClearAllModal(false);
+                    }}
+                    className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-red-600 hover:bg-red-500 cursor-pointer transition-colors flex items-center gap-1.5 shadow-lg shadow-red-900/40"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Sim, Limpar Tudo</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
                 </div>
               </div>
             </div>
