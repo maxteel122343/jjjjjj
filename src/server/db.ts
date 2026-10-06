@@ -242,27 +242,66 @@ function createMockPool() {
 }
 
 let pool: Pool | null = null;
+let mockPoolInstance: Pool | null = null;
+let forceMock = false;
+
+function getMockPool(): Pool {
+  if (!mockPoolInstance) {
+    mockPoolInstance = createMockPool();
+  }
+  return mockPoolInstance;
+}
 
 export function getDatabasePool(): Pool {
+  if (forceMock || !process.env.DATABASE_URL) {
+    return getMockPool();
+  }
+
   if (!pool) {
     const connectionString = process.env.DATABASE_URL;
-    if (!connectionString) {
-      console.warn('[AI Studio] DATABASE_URL não configurada — mock do banco de dados ativo');
-      pool = createMockPool();
-      return pool;
-    }
-
     try {
       const isSsl = connectionString.includes('sslmode=require') || connectionString.includes('supabase.co');
-      pool = new Pool({
+      const realPool = new Pool({
         connectionString,
         ssl: isSsl ? { rejectUnauthorized: false } : undefined,
-        connectionTimeoutMillis: 5000,
+        connectionTimeoutMillis: 3000,
         max: 5,
+      });
+
+      pool = new Proxy(realPool, {
+        get(target, prop) {
+          if (forceMock) {
+            return (getMockPool() as any)[prop];
+          }
+          if (prop === 'connect') {
+            return async () => {
+              try {
+                return await target.connect();
+              } catch (connectErr) {
+                console.warn('[AI Studio] PostgreSQL connect failed, falling back to mock:', connectErr);
+                forceMock = true;
+                return getMockPool().connect();
+              }
+            };
+          }
+          if (prop === 'query') {
+            return async (...args: any[]) => {
+              try {
+                return await (target as any).query(...args);
+              } catch (queryErr) {
+                console.warn('[AI Studio] PostgreSQL query failed, falling back to mock:', queryErr);
+                forceMock = true;
+                return (getMockPool() as any).query(...args);
+              }
+            };
+          }
+          return (target as any)[prop];
+        },
       });
     } catch {
       console.warn('[AI Studio] Falha ao inicializar pool do PostgreSQL — mock ativo');
-      pool = createMockPool();
+      forceMock = true;
+      return getMockPool();
     }
   }
 
@@ -274,4 +313,5 @@ export const db = new Proxy({} as Pool, {
     return (getDatabasePool() as any)[prop];
   },
 });
+
 

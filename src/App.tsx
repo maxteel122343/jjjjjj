@@ -338,6 +338,21 @@ export const App: React.FC = () => {
     showToast('Action removida do histórico.');
   };
 
+  const handleUpdateObjectActions = (objectId: string, actions: ObjectAction[]) => {
+    setRooms((prev) =>
+      prev.map((r) =>
+        r.id === activeRoomId
+          ? {
+              ...r,
+              placedObjects: r.placedObjects.map((obj) =>
+                obj.id === objectId ? { ...obj, actions } : obj
+              ),
+            }
+          : r
+      )
+    );
+  };
+
   const handleApplyActionFromHistoryToObject = (objectId: string, historyAction: ObjectAction) => {
     const targetObj = activeRoom.placedObjects.find((o) => o.id === objectId);
     if (!targetObj) return;
@@ -2499,6 +2514,7 @@ export const App: React.FC = () => {
             onCaptureObjectRotationToSpot={handleCaptureObjectRotationToSpot}
             onCaptureObjectScaleToSpot={handleCaptureObjectScaleToSpot}
             onApplySpotCoordinatesToObject={handleApplySpotCoordinatesToObject}
+            onUpdateObjectActions={handleUpdateObjectActions}
             onToggleTestObjectAction={handleToggleTestObjectAction}
             onPauseTestObjectAction={handlePauseTestObjectAction}
             onResumeTestObjectAction={handleResumeTestObjectAction}

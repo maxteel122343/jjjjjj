@@ -653,12 +653,29 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
         if (activeSpot && onChangeTransformRef.current) {
           const mode = gizmoModeRef.current;
           if (mode === 'mover') {
-            const dx = parseFloat((player.position.x - activeSpot.position[0]).toFixed(2));
-            const dz = parseFloat((player.position.z - activeSpot.position[2]).toFixed(2));
-            const dy = parseFloat((player.position.y - activeSpot.position[1] - (currentPose.heightOffset || 0)).toFixed(2));
+            const rawDx = player.position.x - activeSpot.position[0];
+            const rawDz = player.position.z - activeSpot.position[2];
+            const dist = Math.hypot(rawDx, rawDz);
+            const maxRadius =
+              (activeSpot as any)?.relativeRadius ||
+              (activeSpot as any)?.radius ||
+              spotVisualConfigRef.current?.relativeSpotRadius ||
+              0.45;
+
+            let clampedDx = rawDx;
+            let clampedDz = rawDz;
+            if (dist > maxRadius && dist > 0) {
+              const ratio = maxRadius / dist;
+              clampedDx = rawDx * ratio;
+              clampedDz = rawDz * ratio;
+              // Direct 3D clamping so the gizmo arrows and avatar physically halt at the spot border
+              player.position.x = activeSpot.position[0] + clampedDx;
+              player.position.z = activeSpot.position[2] + clampedDz;
+            }
+            player.position.y = activeSpot.position[1] + (currentPose.heightOffset || 0);
             onChangeTransformRef.current({
               ...transformRef.current,
-              positionOffset: [dx, dy, dz],
+              positionOffset: [parseFloat(clampedDx.toFixed(2)), 0, parseFloat(clampedDz.toFixed(2))],
             });
           } else if (mode === 'escalar' || mode === 'scale') {
             const s = Math.max(0.4, Math.min(2.5, parseFloat(player.scale.x.toFixed(2))));
@@ -667,7 +684,14 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
               scale: s,
             });
           } else if (mode === 'rodar' || mode === 'angle') {
-            const deg = Math.round(((THREE.MathUtils.radToDeg(player.rotation.y) - activeSpot.rotation - (currentPose.rotationOffset || 0)) % 360 + 360) % 360);
+            const deg = Math.round(
+              (((THREE.MathUtils.radToDeg(player.rotation.y) -
+                activeSpot.rotation -
+                (currentPose.rotationOffset || 0)) %
+                360) +
+                360) %
+                360
+            );
             onChangeTransformRef.current({
               ...transformRef.current,
               angle: deg,
@@ -1029,7 +1053,35 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
             }
           }
           if (bestSpot) {
-            onSelectSpotRef.current(bestSpot.id);
+            if (bestSpot.id === currentSpotIdRef.current) {
+              // Click inside active spot: fine-tune avatar position within spot radius
+              const offX = hitPoint.x - bestSpot.position[0];
+              const offZ = hitPoint.z - bestSpot.position[2];
+              const maxRadius =
+                (bestSpot as any)?.relativeRadius ||
+                (bestSpot as any)?.radius ||
+                spotVisualConfigRef.current?.relativeSpotRadius ||
+                0.45;
+              const d = Math.hypot(offX, offZ);
+              let clampedX = offX;
+              let clampedZ = offZ;
+              if (d > maxRadius && d > 0) {
+                clampedX = (offX / d) * maxRadius;
+                clampedZ = (offZ / d) * maxRadius;
+              }
+              if (onChangeTransformRef.current) {
+                onChangeTransformRef.current({
+                  ...transformRef.current,
+                  positionOffset: [
+                    parseFloat(clampedX.toFixed(2)),
+                    transformRef.current.positionOffset?.[1] || 0,
+                    parseFloat(clampedZ.toFixed(2)),
+                  ],
+                });
+              }
+            } else {
+              onSelectSpotRef.current(bestSpot.id);
+            }
           } else {
             let hitObj: THREE.Object3D | null = intersects[0].object;
             while (hitObj && (hitObj as any).userData?.spotId === undefined && hitObj.parent) {
@@ -1252,11 +1304,23 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
     if (!playerGroupRef.current) return;
     const player = playerGroupRef.current;
 
-    // Spot position
+    // Spot position & max radius clamping
     const activeSpot = spots.find((s) => s.id === currentSpotId) || spots[1];
-    const offX = transform.positionOffset?.[0] || 0;
+    const maxRadius =
+      (activeSpot as any)?.relativeRadius ||
+      (activeSpot as any)?.radius ||
+      spotVisualConfig?.relativeSpotRadius ||
+      0.45;
+
+    let offX = transform.positionOffset?.[0] || 0;
+    let offZ = transform.positionOffset?.[2] || 0;
+    const dist = Math.hypot(offX, offZ);
+    if (dist > maxRadius && dist > 0) {
+      const ratio = maxRadius / dist;
+      offX = offX * ratio;
+      offZ = offZ * ratio;
+    }
     const offY = transform.positionOffset?.[1] || 0;
-    const offZ = transform.positionOffset?.[2] || 0;
 
     player.position.set(
       activeSpot.position[0] + offX,
@@ -1285,7 +1349,7 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
     if (m === 'mover') {
       tc.setMode('translate');
       tc.showX = true;
-      tc.showY = true;
+      tc.showY = false;
       tc.showZ = true;
     } else if (m === 'escalar') {
       tc.setMode('scale');

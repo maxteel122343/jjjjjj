@@ -66,6 +66,8 @@ interface CreatorEditorCanvas3DProps {
   onUpdateSpotRotation: (id: string, rotation: number) => void;
   onUpdateSpotRotationPitch?: (id: string, rotationPitch: number) => void;
   onCaptureObjectCoordinatesToSpot?: (spotId: string, objId: string) => void;
+  onCaptureObjectRotationToSpot?: (spotId: string, objId: string) => void;
+  onCaptureObjectScaleToSpot?: (spotId: string, objId: string) => void;
   onApplySpotCoordinatesToObject?: (spotId: string, objId: string) => void;
   onRemoveSpot: (id: string) => void;
   onClearAllSpots?: () => void;
@@ -216,6 +218,8 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
   onUpdateSpotRotation,
   onUpdateSpotRotationPitch,
   onCaptureObjectCoordinatesToSpot,
+  onCaptureObjectRotationToSpot,
+  onCaptureObjectScaleToSpot,
   onApplySpotCoordinatesToObject,
   onRemoveSpot,
   onClearAllSpots,
@@ -678,18 +682,40 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
           tcRafId = null;
         }
         const attached = transformControls.object;
-        const targetObjGroup = selectedObjectIdRef.current ? meshMapRef.current.get(selectedObjectIdRef.current) : null;
-        if (attached && targetObjGroup && attached === targetObjGroup) {
-          const px = Number.isFinite(attached.position.x) ? parseFloat(attached.position.x.toFixed(2)) : 0;
-          const py = Number.isFinite(attached.position.y) ? parseFloat(attached.position.y.toFixed(2)) : 0;
-          const pz = Number.isFinite(attached.position.z) ? parseFloat(attached.position.z.toFixed(2)) : 0;
+        const currentObjId = selectedObjectIdRef.current;
+        const targetObjGroup = currentObjId ? meshMapRef.current.get(currentObjId) : null;
+        if (attached && targetObjGroup && attached === targetObjGroup && currentObjId) {
+          let px = Number.isFinite(attached.position.x) ? parseFloat(attached.position.x.toFixed(2)) : 0;
+          let py = Number.isFinite(attached.position.y) ? parseFloat(attached.position.y.toFixed(2)) : 0;
+          let pz = Number.isFinite(attached.position.z) ? parseFloat(attached.position.z.toFixed(2)) : 0;
+
+          // Clamping strictly within spot radius when testing avatar in room
+          if (isAvatarModeRef.current || currentObjId === customAvatarObjectIdRef.current) {
+            const activeSpot = spotsRef.current.find((s) => s.id === avatarCurrentSpotIdRef.current) || spotsRef.current[0];
+            if (activeSpot) {
+              const spotRadius = (activeSpot as any).relativeRadius || (activeSpot as any).radius || 0.45;
+              const rawDx = px - activeSpot.position[0];
+              const rawDz = pz - activeSpot.position[2];
+              const dist = Math.hypot(rawDx, rawDz);
+              if (dist > spotRadius && dist > 0) {
+                const ratio = spotRadius / dist;
+                px = parseFloat((activeSpot.position[0] + rawDx * ratio).toFixed(2));
+                pz = parseFloat((activeSpot.position[2] + rawDz * ratio).toFixed(2));
+                attached.position.x = px;
+                attached.position.z = pz;
+              }
+              py = parseFloat((activeSpot.position[1]).toFixed(2));
+              attached.position.y = py;
+            }
+          }
+
           const rx = Number.isFinite(attached.rotation.x) ? parseFloat(attached.rotation.x.toFixed(2)) : 0;
           const ry = Number.isFinite(attached.rotation.y) ? parseFloat(attached.rotation.y.toFixed(2)) : 0;
           const rz = Number.isFinite(attached.rotation.z) ? parseFloat(attached.rotation.z.toFixed(2)) : 0;
           const sx = Number.isFinite(attached.scale.x) && attached.scale.x >= 0.05 ? parseFloat(attached.scale.x.toFixed(2)) : 1;
           const sy = Number.isFinite(attached.scale.y) && attached.scale.y >= 0.05 ? parseFloat(attached.scale.y.toFixed(2)) : 1;
           const sz = Number.isFinite(attached.scale.z) && attached.scale.z >= 0.05 ? parseFloat(attached.scale.z.toFixed(2)) : 1;
-          onUpdateObjectTransformRef.current(selectedObjectIdRef.current, {
+          onUpdateObjectTransformRef.current(currentObjId, {
             position: [px, py, pz],
             rotation: [rx, ry, rz],
             scale: [sx, sy, sz],

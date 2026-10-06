@@ -18,10 +18,9 @@ import {
 import { INITIAL_POSES, INITIAL_SPOTS, INITIAL_CHAT } from '../data/initialData';
 import { LoungeCanvas3D } from './LoungeCanvas3D';
 import { GizmoWidget } from './GizmoWidget';
-import { PoseGrid } from './PoseGrid';
 import { GlassChat } from './GlassChat';
 import { SpeechBubbleOverlay } from './SpeechBubbleOverlay';
-import { RoomAccessBar } from './RoomAccessBar';
+import { UnifiedRoomInventory } from './UnifiedRoomInventory';
 import { safeLocalStorageSet } from '../lib/storageUtils';
 import { supabase } from '../lib/supabase';
 
@@ -454,18 +453,17 @@ export const RoomView: React.FC<RoomViewProps> = ({
         </div>
       )}
 
-      {/* TOP BAR matching Reference 1:
-          Cube Icon | Lounge 3/8 | Orbit camera dropdown | Exit */}
-      <header className="absolute top-0 inset-x-0 z-30 flex items-center justify-between px-6 py-4 pointer-events-none">
-        <div className="flex items-center gap-3 pointer-events-auto">
+      {/* TOP BAR: Cube Icon | Lounge 3/8 | Orbit camera dropdown | Exit */}
+      <header className="absolute top-0 inset-x-0 z-30 flex items-center justify-between px-3 sm:px-6 py-2 sm:py-4 pointer-events-none gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 pointer-events-auto min-w-0">
           {/* Room Name & Cube Icon */}
-          <div className="flex items-center gap-2.5 text-white drop-shadow-md">
-            <div className="w-8 h-8 rounded-lg bg-[#ffd700]/15 border border-[#ffd700]/40 flex items-center justify-center text-[#ffd700]">
-              <Box className="w-5 h-5" />
+          <div className="flex items-center gap-2 text-white drop-shadow-md min-w-0">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-[#ffd700]/15 border border-[#ffd700]/40 flex items-center justify-center text-[#ffd700] flex-shrink-0">
+              <Box className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <h1 className="text-xl font-bold tracking-tight flex items-baseline gap-2 text-white">
-              <span>{room.name || 'Lounge'}</span>
-              <span className="text-sm font-normal text-zinc-400">
+            <h1 className="text-sm sm:text-xl font-bold tracking-tight flex items-baseline gap-1.5 text-white truncate">
+              <span className="truncate">{room.name || 'Lounge'}</span>
+              <span className="text-xs sm:text-sm font-normal text-zinc-400 flex-shrink-0">
                 {room.occupation || '3/8'}
               </span>
             </h1>
@@ -473,11 +471,8 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
           {/* Playtest Mode Badge */}
           {room.isPlaytest && (
-            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/60 text-emerald-300 text-xs font-semibold backdrop-blur-md shadow-[0_0_12px_rgba(16,185,129,0.3)]">
-              <span>🧪 MODO TESTE INTERATIVO</span>
-              <span className="text-[10px] text-emerald-200/80 font-normal hidden sm:inline">
-                (Não publicado na vitrine)
-              </span>
+            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/60 text-emerald-300 text-xs font-semibold backdrop-blur-md shadow-[0_0_12px_rgba(16,185,129,0.3)]">
+              <span>🧪 TESTE</span>
             </div>
           )}
 
@@ -486,7 +481,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
             type="button"
             onClick={() => setShowSpotArrows((prev) => !prev)}
             title={showSpotArrows ? 'Ocultar setas piscando dos spots' : 'Exibir setas piscando dos spots'}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold backdrop-blur-md transition-all cursor-pointer border ${
+            className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold backdrop-blur-md transition-all cursor-pointer border ${
               showSpotArrows
                 ? 'bg-[#ffd700]/20 border-[#ffd700]/60 text-[#ffd700] shadow-[0_0_12px_rgba(255,215,0,0.25)]'
                 : 'bg-zinc-800/80 border-zinc-700 text-zinc-400 hover:text-white'
@@ -498,7 +493,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
           </button>
 
           {/* Divider */}
-          <div className="h-5 w-[1px] bg-white/20" />
+          <div className="hidden sm:block h-5 w-[1px] bg-white/20" />
 
           {/* Orbit camera dropdown */}
           <div className="relative">
@@ -577,242 +572,49 @@ export const RoomView: React.FC<RoomViewProps> = ({
         </div>
       </header>
 
-      {/* TOP-LEFT HUD matching Reference 1:
-          1) 3D Gizmo with center click cycling mode and color
-          2) 3x3 Pose Grid with miniature previews and GLB switch */}
-      <div className="absolute top-20 left-6 z-30 flex flex-col gap-4 pointer-events-auto">
+      {/* TOP-LEFT HUD: 2D/3D Gizmo Widget with Setas & Spot Radius Clamping */}
+      <div className="absolute top-20 left-3 sm:left-6 z-30 flex flex-col gap-2 pointer-events-auto">
         <GizmoWidget
           mode={gizmoMode}
           onCycleMode={handleCycleGizmoMode}
           transform={transform}
           onChangeTransform={setTransform}
           onSetMode={setGizmoMode}
-        />
-
-        <PoseGrid
-          poses={poses}
-          selectedPoseId={selectedPose.id}
-          onSelectPose={setSelectedPose}
-          activeUserAvatar={liveAvatar}
-          ownedAvatarIds={ownedAvatarIds}
+          spotRadius={
+            (spots.find((s) => s.id === currentSpotId) as any)?.relativeRadius ||
+            (spots.find((s) => s.id === currentSpotId) as any)?.radius ||
+            spotVisualConfig?.relativeSpotRadius ||
+            0.45
+          }
         />
       </div>
 
-      {/* RIGHT HUD matching Reference 1:
-          Dark Glass Chat Panel with messages and input */}
-      <div className="absolute top-20 right-6 z-30 pointer-events-auto">
-        <GlassChat
-          roomName={room.name || 'Lounge'}
-          messages={chatMessages}
-          onSendMessage={handleSendMessage}
-        />
-      </div>
+      {/* DRAGGABLE & MINIMIZABLE GLASS CHAT (Can be moved anywhere or minimized to keep screen clean) */}
+      <GlassChat
+        roomName={room.name || 'Lounge'}
+        messages={chatMessages}
+        onSendMessage={handleSendMessage}
+      />
 
-      {/* BOTTOM CENTER: INVENTÁRIO DE ACESSO DAS ROOMS (HOTBAR SLOTS 1-8) */}
-      <RoomAccessBar
+      {/* SINGLE UNIFIED INVENTORY: Orientation toggleable (Horizontal at bottom / Vertical on left dock) */}
+      <UnifiedRoomInventory
         slots={roomAccessSlots}
         onUpdateSlots={handleUpdateRoomAccessSlots}
         onSlotClick={handleTriggerAccessSlot}
+        poses={poses}
+        selectedPoseId={selectedPose.id}
+        onSelectPose={setSelectedPose}
+        storeAvatars={storeAvatars}
+        activeUserAvatar={liveAvatar}
+        onSelectAvatar={(av) => {
+          setLiveAvatar(av);
+          showHudToast(`👤 Avatar alterado para "${av.name}"!`);
+        }}
         activeAvatarId={liveAvatar?.id}
         activePoseId={selectedPose.id}
-        isInsideRoom={true}
-        onOpenManageDrawer={() => setIsManageDrawerOpen(true)}
         onShowToast={showHudToast}
       />
 
-      {/* DRAWER / MODAL: GERENCIAR SLOTS DE ACESSO DAS ROOMS */}
-      {isManageDrawerOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/70 backdrop-blur-sm animate-fade-in select-none">
-          <div className="relative w-full max-w-md h-full bg-[#121319] border-l border-[#ffd700]/40 p-6 flex flex-col justify-between shadow-2xl text-zinc-100">
-            <div>
-              <div className="flex items-center justify-between pb-3 border-b border-white/10">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-[#ffd700]" />
-                  <h3 className="text-base font-serif font-bold text-white">
-                    Acesso Rápido das Rooms
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsManageDrawerOpen(false)}
-                  className="p-1 rounded-lg text-zinc-400 hover:text-white transition-colors cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <p className="text-xs text-zinc-400 mt-2">
-                Arraste um Avatar ou Pose da sua coleção para os slots da barra de acesso abaixo (ou use as teclas de 1 a 8).
-              </p>
-
-              {/* Tabs: Avatares | Poses */}
-              <div className="flex items-center gap-2 mt-4 border-b border-white/10 pb-2">
-                <button
-                  type="button"
-                  onClick={() => setDrawerTab('avatars')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    drawerTab === 'avatars'
-                      ? 'bg-[#ffd700] text-black shadow-md'
-                      : 'bg-zinc-800 text-zinc-400 hover:text-white'
-                  }`}
-                >
-                  Avatares ({storeAvatars.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDrawerTab('poses')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    drawerTab === 'poses'
-                      ? 'bg-[#ffd700] text-black shadow-md'
-                      : 'bg-zinc-800 text-zinc-400 hover:text-white'
-                  }`}
-                >
-                  Poses ({poses.length})
-                </button>
-              </div>
-
-              {/* Items List */}
-              <div className="mt-4 space-y-2.5 max-h-[58vh] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-zinc-700">
-                {drawerTab === 'avatars' ? (
-                  storeAvatars.length === 0 ? (
-                    <div className="py-12 text-center text-zinc-500 text-xs">
-                      Nenhum avatar encontrado. Crie ou publique avatares no Modo Customização.
-                    </div>
-                  ) : (
-                    storeAvatars.map((av) => {
-                      const isEquippedInRoom = liveAvatar?.id === av.id;
-                      return (
-                        <div
-                          key={av.id}
-                          draggable={true}
-                          onDragStart={(e) => {
-                            e.dataTransfer.setData(
-                              'application/json',
-                              JSON.stringify({ type: 'avatar', avatar: av })
-                            );
-                            e.dataTransfer.effectAllowed = 'copyMove';
-                          }}
-                          className="p-2.5 rounded-xl bg-[#171922] border border-white/10 flex items-center justify-between gap-3 group hover:border-[#ffd700]/50 transition-colors"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-lg overflow-hidden bg-black flex-shrink-0">
-                              <img
-                                src={av.thumb}
-                                alt={av.name}
-                                className="w-full h-full object-cover"
-                                referrerPolicy="no-referrer"
-                              />
-                            </div>
-                            <div>
-                              <p className="text-xs font-bold text-zinc-200">{av.name}</p>
-                              <span className="text-[10px] font-mono text-cyan-400">AVATAR</span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1.5">
-                            <div
-                              className="p-1.5 text-zinc-500 group-hover:text-[#ffd700] cursor-grab active:cursor-grabbing"
-                              title="Arraste para os slots de acesso"
-                            >
-                              <GripVertical className="w-4 h-4" />
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setLiveAvatar(av);
-                                showHudToast(`Avatar "${av.name}" equipado na sala!`);
-                              }}
-                              className={`px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer transition-all ${
-                                isEquippedInRoom
-                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                                  : 'bg-zinc-800 hover:bg-[#ffd700] hover:text-black text-zinc-200'
-                              }`}
-                            >
-                              {isEquippedInRoom ? '✓ Em Uso' : 'Equipar'}
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )
-                ) : (
-                  poses.map((pose) => {
-                    const isActivePose = selectedPose.id === pose.id;
-                    return (
-                      <div
-                        key={pose.id}
-                        draggable={true}
-                        onDragStart={(e) => {
-                          e.dataTransfer.setData(
-                            'application/json',
-                            JSON.stringify({ type: 'pose', pose })
-                          );
-                          e.dataTransfer.effectAllowed = 'copyMove';
-                        }}
-                        className="p-2.5 rounded-xl bg-[#171922] border border-white/10 flex items-center justify-between gap-3 group hover:border-[#ffd700]/50 transition-colors"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-lg overflow-hidden bg-black flex-shrink-0 flex items-center justify-center">
-                            {pose.thumbnailUrl ? (
-                              <img
-                                src={pose.thumbnailUrl}
-                                alt={pose.name}
-                                className="w-full h-full object-cover"
-                                referrerPolicy="no-referrer"
-                              />
-                            ) : (
-                              <Sparkles className="w-5 h-5 text-[#ffd700]" />
-                            )}
-                          </div>
-                          <div>
-                            <p className="text-xs font-bold text-zinc-200">{pose.name}</p>
-                            <span className="text-[10px] font-mono text-[#ffd700]">POSE</span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1.5">
-                          <div
-                            className="p-1.5 text-zinc-500 group-hover:text-[#ffd700] cursor-grab active:cursor-grabbing"
-                            title="Arraste para os slots de acesso"
-                          >
-                            <GripVertical className="w-4 h-4" />
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedPose(pose);
-                              showHudToast(`Pose "${pose.name}" ativada!`);
-                            }}
-                            className={`px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer transition-all ${
-                              isActivePose
-                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                                : 'bg-zinc-800 hover:bg-[#ffd700] hover:text-black text-zinc-200'
-                            }`}
-                          >
-                            {isActivePose ? '✓ Ativa' : 'Aplicar'}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-            <div className="pt-3 border-t border-white/10">
-              <button
-                type="button"
-                onClick={() => setIsManageDrawerOpen(false)}
-                className="w-full py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-white transition-colors cursor-pointer"
-              >
-                Concluir
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
