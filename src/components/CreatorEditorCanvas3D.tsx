@@ -64,6 +64,9 @@ interface CreatorEditorCanvas3DProps {
   onSelectObject: (id: string | null) => void;
   onUpdateSpotPosition: (id: string, position: [number, number, number]) => void;
   onUpdateSpotRotation: (id: string, rotation: number) => void;
+  onUpdateSpotRotationPitch?: (id: string, rotationPitch: number) => void;
+  onCaptureObjectCoordinatesToSpot?: (spotId: string, objId: string) => void;
+  onApplySpotCoordinatesToObject?: (spotId: string, objId: string) => void;
   onRemoveSpot: (id: string) => void;
   onClearAllSpots?: () => void;
   onRemoveOverlappingSpots?: () => void;
@@ -112,7 +115,7 @@ interface CreatorEditorCanvas3DProps {
   onUpdateSpotTags?: (spotId: string, attachmentTag?: string, connectsToTags?: string[]) => void;
   onUpdateSpotRelativeRadius?: (spotId: string, radius: number) => void;
   onConnectSpotsByTag?: (sourceSpotId: string, targetSpotId: string) => void;
-  testingObjectAction?: { objectId: string; actionId: string } | null;
+  testingObjectAction?: { objectId: string; actionId: string; isPaused?: boolean } | null;
   onExitEditor?: () => void;
 }
 
@@ -211,6 +214,9 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
   onSelectObject,
   onUpdateSpotPosition,
   onUpdateSpotRotation,
+  onUpdateSpotRotationPitch,
+  onCaptureObjectCoordinatesToSpot,
+  onApplySpotCoordinatesToObject,
   onRemoveSpot,
   onClearAllSpots,
   onRemoveOverlappingSpots,
@@ -461,6 +467,8 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
   onUpdateSpotPositionRef.current = onUpdateSpotPosition;
   const onUpdateSpotRotationRef = useRef(onUpdateSpotRotation);
   onUpdateSpotRotationRef.current = onUpdateSpotRotation;
+  const onUpdateSpotRotationPitchRef = useRef(onUpdateSpotRotationPitch);
+  onUpdateSpotRotationPitchRef.current = onUpdateSpotRotationPitch;
   const spotGizmoAnchorRef = useRef<THREE.Group | null>(null);
   const activeGizmoModeRef = useRef(activeGizmoMode);
   activeGizmoModeRef.current = activeGizmoMode;
@@ -484,6 +492,7 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
 
   // Direct object drag on floor (Blender style)
   const isDirectDraggingObjectRef = useRef(false);
+  const pausedActionFactorMapRef = useRef<Map<string, number>>(new Map());
   const directDragStartPosRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const directDragStartMouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const directDragStartRotYRef = useRef<number>(0);
@@ -669,7 +678,8 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
           tcRafId = null;
         }
         const attached = transformControls.object;
-        if (attached && selectedObjectIdRef.current) {
+        const targetObjGroup = selectedObjectIdRef.current ? meshMapRef.current.get(selectedObjectIdRef.current) : null;
+        if (attached && targetObjGroup && attached === targetObjGroup) {
           const px = Number.isFinite(attached.position.x) ? parseFloat(attached.position.x.toFixed(2)) : 0;
           const py = Number.isFinite(attached.position.y) ? parseFloat(attached.position.y.toFixed(2)) : 0;
           const pz = Number.isFinite(attached.position.z) ? parseFloat(attached.position.z.toFixed(2)) : 0;
@@ -684,13 +694,27 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
             rotation: [rx, ry, rz],
             scale: [sx, sy, sz],
           });
-        } else if (attached && selectedSpotIdRef.current) {
-          const px = Number.isFinite(attached.position.x) ? parseFloat(attached.position.x.toFixed(2)) : 0;
-          const py = Number.isFinite(attached.position.y) ? parseFloat(attached.position.y.toFixed(2)) : 0;
-          const pz = Number.isFinite(attached.position.z) ? parseFloat(attached.position.z.toFixed(2)) : 0;
-          const deg = Math.round(((THREE.MathUtils.radToDeg(attached.rotation.y) % 360) + 360) % 360);
-          onUpdateSpotPositionRef.current(selectedSpotIdRef.current, [px, py, pz]);
-          onUpdateSpotRotationRef.current(selectedSpotIdRef.current, deg);
+        } else if (attached && spotGizmoAnchorRef.current && attached === spotGizmoAnchorRef.current && selectedSpotIdRef.current) {
+          if (activeGizmoModeRef.current === 'rodar') {
+            const currentSpot = spotsRef.current.find((s) => s.id === selectedSpotIdRef.current);
+            if (currentSpot) {
+              let worldPos = new THREE.Vector3(...currentSpot.position);
+              if (currentSpot.parentObjectId && currentSpot.relativePosition && meshMapRef.current.has(currentSpot.parentObjectId)) {
+                const pGroup = meshMapRef.current.get(currentSpot.parentObjectId)!;
+                worldPos = pGroup.localToWorld(new THREE.Vector3(...currentSpot.relativePosition));
+              }
+              attached.position.copy(worldPos);
+            }
+            const degY = Math.round(((THREE.MathUtils.radToDeg(attached.rotation.y) % 360) + 360) % 360);
+            const degX = Math.round(((THREE.MathUtils.radToDeg(attached.rotation.x) % 360) + 360) % 360);
+            onUpdateSpotRotationRef.current(selectedSpotIdRef.current, degY);
+            onUpdateSpotRotationPitchRef.current?.(selectedSpotIdRef.current, degX);
+          } else {
+            const px = Number.isFinite(attached.position.x) ? parseFloat(attached.position.x.toFixed(2)) : 0;
+            const py = Number.isFinite(attached.position.y) ? parseFloat(attached.position.y.toFixed(2)) : 0;
+            const pz = Number.isFinite(attached.position.z) ? parseFloat(attached.position.z.toFixed(2)) : 0;
+            onUpdateSpotPositionRef.current(selectedSpotIdRef.current, [px, py, pz]);
+          }
         }
       }
     });
@@ -708,7 +732,8 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
       if (tcRafId) cancelAnimationFrame(tcRafId);
       tcRafId = requestAnimationFrame(() => {
         tcRafId = null;
-        if (selectedObjectIdRef.current) {
+        const targetObjGroup = selectedObjectIdRef.current ? meshMapRef.current.get(selectedObjectIdRef.current) : null;
+        if (attached && targetObjGroup && attached === targetObjGroup && selectedObjectIdRef.current) {
           const px = Number.isFinite(attached.position.x) ? parseFloat(attached.position.x.toFixed(2)) : 0;
           const py = Number.isFinite(attached.position.y) ? parseFloat(attached.position.y.toFixed(2)) : 0;
           const pz = Number.isFinite(attached.position.z) ? parseFloat(attached.position.z.toFixed(2)) : 0;
@@ -723,13 +748,27 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
             rotation: [rx, ry, rz],
             scale: [sx, sy, sz],
           });
-        } else if (selectedSpotIdRef.current) {
-          const px = Number.isFinite(attached.position.x) ? parseFloat(attached.position.x.toFixed(2)) : 0;
-          const py = Number.isFinite(attached.position.y) ? parseFloat(attached.position.y.toFixed(2)) : 0;
-          const pz = Number.isFinite(attached.position.z) ? parseFloat(attached.position.z.toFixed(2)) : 0;
-          const deg = Math.round(((THREE.MathUtils.radToDeg(attached.rotation.y) % 360) + 360) % 360);
-          onUpdateSpotPositionRef.current(selectedSpotIdRef.current, [px, py, pz]);
-          onUpdateSpotRotationRef.current(selectedSpotIdRef.current, deg);
+        } else if (attached && spotGizmoAnchorRef.current && attached === spotGizmoAnchorRef.current && selectedSpotIdRef.current) {
+          if (activeGizmoModeRef.current === 'rodar') {
+            const currentSpot = spotsRef.current.find((s) => s.id === selectedSpotIdRef.current);
+            if (currentSpot) {
+              let worldPos = new THREE.Vector3(...currentSpot.position);
+              if (currentSpot.parentObjectId && currentSpot.relativePosition && meshMapRef.current.has(currentSpot.parentObjectId)) {
+                const pGroup = meshMapRef.current.get(currentSpot.parentObjectId)!;
+                worldPos = pGroup.localToWorld(new THREE.Vector3(...currentSpot.relativePosition));
+              }
+              attached.position.copy(worldPos);
+            }
+            const degY = Math.round(((THREE.MathUtils.radToDeg(attached.rotation.y) % 360) + 360) % 360);
+            const degX = Math.round(((THREE.MathUtils.radToDeg(attached.rotation.x) % 360) + 360) % 360);
+            onUpdateSpotRotationRef.current(selectedSpotIdRef.current, degY);
+            onUpdateSpotRotationPitchRef.current?.(selectedSpotIdRef.current, degX);
+          } else {
+            const px = Number.isFinite(attached.position.x) ? parseFloat(attached.position.x.toFixed(2)) : 0;
+            const py = Number.isFinite(attached.position.y) ? parseFloat(attached.position.y.toFixed(2)) : 0;
+            const pz = Number.isFinite(attached.position.z) ? parseFloat(attached.position.z.toFixed(2)) : 0;
+            onUpdateSpotPositionRef.current(selectedSpotIdRef.current, [px, py, pz]);
+          }
         }
       });
     });
@@ -1495,17 +1534,28 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                 avatarGroupRef.current.scale.set(currentMotion.scale, currentMotion.scale, currentMotion.scale);
               }
             }
-          } else if (isAvatarOnSpot && spot.parentObjectId && spot.relativePosition) {
-            // Keep avatar glued to parent object's surface if on a relative spot without motion
-            const tGroup = meshMapRef.current.get(spot.parentObjectId);
-            if (tGroup) {
-              const worldPos = tGroup.localToWorld(new THREE.Vector3(...spot.relativePosition));
-              if (customAvatarMesh && effectiveCustomAvatarId) {
-                movedObjectIds.add(effectiveCustomAvatarId);
-                customAvatarMesh.position.copy(worldPos);
-              } else if (avatarGroupRef.current) {
-                avatarGroupRef.current.position.copy(worldPos);
+          } else if (isAvatarOnSpot) {
+            // Resting avatar firmly pinned to still spot (no motion) - immune to nearby motion spots!
+            let restPos = new THREE.Vector3(...spot.position);
+            if (spot.parentObjectId && spot.relativePosition) {
+              const tGroup = meshMapRef.current.get(spot.parentObjectId);
+              if (tGroup) {
+                restPos = tGroup.localToWorld(new THREE.Vector3(...spot.relativePosition));
               }
+            }
+            const spotRotY = THREE.MathUtils.degToRad(spot.rotation);
+            const spotRotX = THREE.MathUtils.degToRad(spot.rotationPitch || 0);
+            if (customAvatarMesh && effectiveCustomAvatarId) {
+              movedObjectIds.add(effectiveCustomAvatarId);
+              customAvatarMesh.position.copy(restPos);
+              customAvatarMesh.rotation.set(spotRotX, spotRotY, customAvatarMesh.rotation.z);
+            } else if (avatarGroupRef.current) {
+              avatarGroupRef.current.position.copy(restPos);
+              avatarGroupRef.current.rotation.y = spotRotY;
+            }
+            if (activeAvatarHaloRef.current) {
+              activeAvatarHaloRef.current.position.set(restPos.x, 0.025, restPos.z);
+              activeAvatarHaloRef.current.visible = true;
             }
           }
         });
@@ -1532,7 +1582,13 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
               const cfg = actToRun.motion;
               const spd = cfg.speed || 1.0;
               const phase = (nowSec * spd * 2.0) % (Math.PI * 2);
-              const factor = cfg.loop ? (1 - Math.cos(phase)) / 2 : ((nowSec * spd) % 1.0);
+              const isPaused = currentTestingAction?.objectId === obj.id && currentTestingAction?.isPaused;
+              let factor = cfg.loop ? (1 - Math.cos(phase)) / 2 : ((nowSec * spd) % 1.0);
+              if (isPaused) {
+                factor = pausedActionFactorMapRef.current.get(obj.id) ?? factor;
+              } else {
+                pausedActionFactorMapRef.current.set(obj.id, factor);
+              }
 
               let baseDx = (cfg.deltaPosition?.[0] || 0) * factor;
               let baseDy = (cfg.deltaPosition?.[1] || 0) * factor;
@@ -1659,6 +1715,11 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
 
       if (e.button !== 0) return;
 
+      // In Surface Snap Mode: do not start orbiting or dragging when clicking to place spots on mesh
+      if (surfaceSnapTargetObjectIdRef.current) {
+        return;
+      }
+
       const rect = container.getBoundingClientRect();
       const mouse = new THREE.Vector2(
         ((e.clientX - rect.left) / rect.width) * 2 - 1,
@@ -1757,6 +1818,7 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
             const foundId = (hitObj as any)?.userData?.placedObjectId || (!isAny ? surfaceSnapTargetObjectIdRef.current : null);
             const targetObjGroup = foundId ? meshMapRef.current.get(foundId) : null;
             if (targetObjGroup) {
+              targetObjGroup.updateMatrixWorld(true);
               const normal = hit.face
                 ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize()
                 : new THREE.Vector3(0, 1, 0);
@@ -1931,9 +1993,6 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
             [parseFloat(hit.point.x.toFixed(2)), parseFloat(hit.point.y.toFixed(2)), parseFloat(hit.point.z.toFixed(2))]
           );
         }
-        currentSurfaceHitRef.current = null;
-        if (surfaceRingMeshRef.current) surfaceRingMeshRef.current.visible = false;
-        container.style.cursor = 'default';
         return;
       }
 
@@ -2494,9 +2553,86 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
       }
     });
 
+    // Synchronize 3D Visual Spot Markers as child objects on target objects (and floor)
+    meshMapRef.current.forEach((objGroup, objId) => {
+      let relSpotsGroup = objGroup.getObjectByName('relativeSpotsVisualGroup') as THREE.Group | null;
+      if (!relSpotsGroup) {
+        relSpotsGroup = new THREE.Group();
+        relSpotsGroup.name = 'relativeSpotsVisualGroup';
+        objGroup.add(relSpotsGroup);
+      }
+      while (relSpotsGroup.children.length > 0) {
+        const c = relSpotsGroup.children[0];
+        relSpotsGroup.remove(c);
+      }
+      spots.filter((s) => s.parentObjectId === objId && s.relativePosition).forEach((spot) => {
+        const m = new THREE.Group();
+        m.position.set(...spot.relativePosition!);
+        if (spot.surfaceNormal) {
+          const norm = new THREE.Vector3(...spot.surfaceNormal).normalize();
+          m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), norm);
+        }
+        const isSel = spot.id === selectedSpotId;
+        const ringGeo = new THREE.RingGeometry(0.03, 0.14, 32);
+        const ringMat = new THREE.MeshBasicMaterial({
+          color: isSel ? 0x00f0ff : 0xffd700,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.9,
+          depthTest: false,
+        });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.renderOrder = 998;
+        m.add(ring);
+
+        const dotGeo = new THREE.CircleGeometry(0.025, 16);
+        const dotMat = new THREE.MeshBasicMaterial({
+          color: isSel ? 0x00f0ff : 0xffffff,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.95,
+          depthTest: false,
+        });
+        const dot = new THREE.Mesh(dotGeo, dotMat);
+        dot.renderOrder = 999;
+        m.add(dot);
+        relSpotsGroup.add(m);
+      });
+    });
+
+    if (spotsFloorGroupRef.current) {
+      const flGroup = spotsFloorGroupRef.current;
+      while (flGroup.children.length > 0) {
+        flGroup.remove(flGroup.children[0]);
+      }
+      spots.filter((s) => !s.parentObjectId).forEach((spot) => {
+        const isSel = spot.id === selectedSpotId;
+        const fm = new THREE.Group();
+        fm.position.set(spot.position[0], 0.022, spot.position[2]);
+        fm.rotation.y = THREE.MathUtils.degToRad(spot.rotation);
+        if (spot.rotationPitch) {
+          fm.rotation.x = THREE.MathUtils.degToRad(spot.rotationPitch);
+        }
+        const rGeo = new THREE.RingGeometry(0.08, 0.22, 32);
+        const rMat = new THREE.MeshBasicMaterial({
+          color: isSel ? 0x00f0ff : (spot.motion?.enabled ? 0x22d3ee : 0xd4af37),
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.75,
+        });
+        const rMesh = new THREE.Mesh(rGeo, rMat);
+        rMesh.rotation.x = -Math.PI / 2;
+        fm.add(rMesh);
+        flGroup.add(fm);
+      });
+    }
+
     // Reattach TransformControls if selected object exists
     if (transformControlsRef.current) {
-      if (selectedObjectId) {
+      if (surfaceSnapTargetObjectId) {
+        transformControlsRef.current.detach();
+        transformControlsRef.current.enabled = false;
+      } else if (selectedObjectId) {
         const target = meshMapRef.current.get(selectedObjectId);
         if (target) {
           if (transformControlsRef.current.object !== target) {
@@ -2515,7 +2651,11 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
               worldPos = pGroup.localToWorld(new THREE.Vector3(...spot.relativePosition));
             }
             spotGizmoAnchorRef.current.position.copy(worldPos);
-            spotGizmoAnchorRef.current.rotation.set(0, THREE.MathUtils.degToRad(spot.rotation), 0);
+            spotGizmoAnchorRef.current.rotation.set(
+              THREE.MathUtils.degToRad(spot.rotationPitch || 0),
+              THREE.MathUtils.degToRad(spot.rotation),
+              0
+            );
           }
           spotGizmoAnchorRef.current.visible = true;
           if (transformControlsRef.current.object !== spotGizmoAnchorRef.current) {
@@ -2528,12 +2668,21 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
         transformControlsRef.current.detach();
       }
     }
-  }, [placedObjects, selectedObjectId, selectedSpotId, spots, lockSpots, showSpots, isAvatarMode]);
+  }, [placedObjects, selectedObjectId, selectedSpotId, spots, lockSpots, showSpots, isAvatarMode, surfaceSnapTargetObjectId]);
 
   // 4. Update TransformControls visual mode (Mover, Rodar, Escalar, Elevar)
   useEffect(() => {
     const tc = transformControlsRef.current;
     if (!tc) return;
+
+    // In surface snap mode: detach & disable completely so it NEVER intercepts clicks or moves objects!
+    if (surfaceSnapTargetObjectId) {
+      tc.detach();
+      tc.enabled = false;
+      if (spotGizmoAnchorRef.current) spotGizmoAnchorRef.current.visible = false;
+      return;
+    }
+    tc.enabled = true;
 
     // Detach only if neither an object nor an editable spot is selected
     if (!selectedObjectId && (!selectedSpotId || lockSpots || !showSpots || isAvatarMode)) {
@@ -2553,29 +2702,33 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
     if (selectedSpotId && !selectedObjectId) {
       if (spotGizmoAnchorRef.current) spotGizmoAnchorRef.current.visible = true;
       if (activeGizmoMode === 'rodar') {
+        tc.size = 0.32; // Exact diameter matching the 0.3m yellow disc so green ring sits tight on the yellow areola!
         tc.setMode('rotate');
-        tc.showX = false;
-        tc.showY = true;
+        tc.showX = true; // Rotacionar para cima e para baixo (eixo X / Pitch)
+        tc.showY = true; // Rotacionar para os lados (eixo Y / Yaw)
         tc.showZ = false;
       } else if (activeGizmoMode === 'elevar') {
+        tc.size = 0.65;
         tc.setMode('translate');
         tc.showX = false;
         tc.showY = true;
         tc.showZ = false;
       } else {
+        tc.size = 0.65;
         tc.setMode('translate');
         tc.showX = true;
-        tc.showY = true; // Seta para cima e para baixo (eixo vertical Y)
+        tc.showY = true;
         tc.showZ = true;
       }
       return;
     }
 
     if (spotGizmoAnchorRef.current) spotGizmoAnchorRef.current.visible = false;
+    tc.size = 0.85;
     if (activeGizmoMode === 'mover') {
       tc.setMode('translate');
       tc.showX = true;
-      tc.showY = true; // Seta para cima e para baixo (eixo vertical Y)
+      tc.showY = true;
       tc.showZ = true;
     } else if (activeGizmoMode === 'elevar') {
       tc.setMode('translate');
@@ -2584,7 +2737,7 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
       tc.showZ = false;
     } else if (activeGizmoMode === 'rodar') {
       tc.setMode('rotate');
-      tc.showX = false;
+      tc.showX = true;
       tc.showY = true;
       tc.showZ = false;
     } else if (activeGizmoMode === 'escalar') {
@@ -2593,7 +2746,7 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
       tc.showY = true;
       tc.showZ = true;
     }
-  }, [activeGizmoMode, selectedObjectId, selectedSpotId, lockSpots, showSpots, isAvatarMode]);
+  }, [activeGizmoMode, selectedObjectId, selectedSpotId, lockSpots, showSpots, isAvatarMode, surfaceSnapTargetObjectId]);
 
   // 4b. Synchronize spotGizmoAnchor with active spot
   useEffect(() => {
@@ -2610,7 +2763,11 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
             worldPos = pGroup.localToWorld(new THREE.Vector3(...spot.relativePosition));
           }
           spotGizmoAnchorRef.current.position.copy(worldPos);
-          spotGizmoAnchorRef.current.rotation.set(0, THREE.MathUtils.degToRad(spot.rotation), 0);
+          spotGizmoAnchorRef.current.rotation.set(
+            THREE.MathUtils.degToRad(spot.rotationPitch || 0),
+            THREE.MathUtils.degToRad(spot.rotation),
+            0
+          );
         }
         spotGizmoAnchorRef.current.visible = true;
         if (tc.object !== spotGizmoAnchorRef.current) {
@@ -4417,6 +4574,20 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                 </button>
               )}
 
+              {selectedObj && spots.length > 0 && onCaptureObjectCoordinatesToSpot && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetSpot = selectedSpot || spots[0];
+                    if (targetSpot) onCaptureObjectCoordinatesToSpot(targetSpot.id, selectedObj.id);
+                  }}
+                  className="px-2 py-1 rounded bg-black/60 hover:bg-[#d4af37]/20 border border-[#d4af37]/50 text-[#ffd700] text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-sm active:scale-95"
+                  title="Captura a rotação e a escala deste objeto para o spot, permitindo testar a room com coordenadas exatas"
+                >
+                  <span>📐 Gravar Rotação/Escala no Spot</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => {
@@ -4564,11 +4735,11 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                 </div>
               </div>
 
-              {/* Column 2: Rotação Y (Graus °) */}
+              {/* Column 2: Rotação Y (Horizontal) e X (Pitch Cima/Baixo) */}
               <div className="p-2 rounded-lg bg-black/40 border border-[#d4af37]/20 space-y-1.5 flex flex-col justify-between">
                 <div>
                   <span className="text-[10px] uppercase font-bold text-[#d4af37] tracking-wider block">
-                    Rotação (Graus °)
+                    {selectedSpot ? 'Giro Horizontal (Yaw °)' : 'Rotação (Graus °)'}
                   </span>
                   <div className="flex items-center gap-1 mt-1.5">
                     <button
@@ -4605,6 +4776,45 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                   </div>
                 </div>
 
+                {selectedSpot && (
+                  <div className="pt-1.5 border-t border-[#d4af37]/20">
+                    <span className="text-[10px] uppercase font-bold text-cyan-300 tracking-wider block">
+                      Inclinar Cima / Baixo (Pitch °)
+                    </span>
+                    <div className="flex items-center gap-1 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cur = selectedSpot.rotationPitch || 0;
+                          onUpdateSpotRotationPitch?.(selectedSpot.id, cur - 15);
+                        }}
+                        className="px-2 py-0.5 rounded bg-[#1e2026] hover:bg-cyan-400 hover:text-black text-[10px] font-semibold text-cyan-300"
+                      >
+                        -15°
+                      </button>
+                      <NumericInput
+                        step={5}
+                        min={-90}
+                        max={90}
+                        precision={0}
+                        value={selectedSpot.rotationPitch || 0}
+                        onChange={(deg) => onUpdateSpotRotationPitch?.(selectedSpot.id, deg)}
+                        className="w-full bg-[#14151a] border border-cyan-400/40 rounded px-1.5 py-0.5 text-center font-mono text-[11px] text-cyan-300 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cur = selectedSpot.rotationPitch || 0;
+                          onUpdateSpotRotationPitch?.(selectedSpot.id, cur + 15);
+                        }}
+                        className="px-2 py-0.5 rounded bg-[#1e2026] hover:bg-cyan-400 hover:text-black text-[10px] font-semibold text-cyan-300"
+                      >
+                        +15°
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-4 gap-1 pt-1">
                   {[0, 90, 180, 270].map((deg) => (
                     <button
@@ -4619,12 +4829,12 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                 </div>
               </div>
 
-              {/* Column 3: Escala no Mundo Real (Metros & Encaixar no Metro) */}
+              {/* Column 3: Escala no Mundo Real OU Coordenadas de Teste para o Spot */}
               <div className="p-2 rounded-lg bg-black/40 border border-[#d4af37]/20 space-y-2 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] uppercase font-bold text-[#d4af37] tracking-wider block">
-                      Escala (Multiplicador)
+                      {selectedObj ? 'Escala (Multiplicador)' : 'Coordenadas de Teste'}
                     </span>
                     {selectedObj && (() => {
                       const dims = rawDimensionsState[selectedObj.id] ||
@@ -4671,11 +4881,43 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                         +0.1
                       </button>
                     </div>
-                  ) : (
-                    <p className="text-[10px] text-[#e8d5b5]/50 mt-2">
-                      Spot de teletransporte não possui escala variável.
-                    </p>
-                  )}
+                  ) : selectedSpot ? (
+                    <div className="space-y-1.5 mt-1.5">
+                      <p className="text-[9px] text-[#e8d5b5]/70">
+                        Ao clicar no spot no teste, o avatar/objeto adota estas coordenadas:
+                      </p>
+                      {selectedSpot.targetRotation && (
+                        <div className="text-[9px] font-mono text-cyan-300 bg-black/60 px-1.5 py-0.5 rounded border border-cyan-400/30 truncate">
+                          Rot: [{selectedSpot.targetRotation.map((r) => ((r * 180) / Math.PI).toFixed(0) + '°').join(', ')}]
+                        </div>
+                      )}
+                      {selectedSpot.targetScale && (
+                        <div className="text-[9px] font-mono text-purple-300 bg-black/60 px-1.5 py-0.5 rounded border border-purple-400/30 truncate">
+                          Esc: [{selectedSpot.targetScale.map((s) => s.toFixed(2)).join(', ')}]
+                        </div>
+                      )}
+                      <div className="flex flex-col gap-1 pt-1">
+                        {selectedObjectId && onCaptureObjectCoordinatesToSpot && (
+                          <button
+                            type="button"
+                            onClick={() => onCaptureObjectCoordinatesToSpot(selectedSpot.id, selectedObjectId)}
+                            className="w-full py-1 rounded bg-[#d4af37]/20 hover:bg-[#d4af37] text-[#ffd700] hover:text-black border border-[#d4af37]/50 text-[10px] font-bold transition-all cursor-pointer"
+                          >
+                            📐 Capturar Rotação/Escala do Objeto
+                          </button>
+                        )}
+                        {selectedObjectId && onApplySpotCoordinatesToObject && (
+                          <button
+                            type="button"
+                            onClick={() => onApplySpotCoordinatesToObject(selectedSpot.id, selectedObjectId)}
+                            className="w-full py-1 rounded bg-cyan-950 hover:bg-cyan-600 text-cyan-300 hover:text-white border border-cyan-400/50 text-[10px] font-bold transition-all cursor-pointer"
+                          >
+                            🎯 Aplicar neste Objeto
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
 
                 {selectedObj && (() => {

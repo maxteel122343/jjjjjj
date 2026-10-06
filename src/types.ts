@@ -35,6 +35,9 @@ export interface SpotItem {
   type: SpotType;
   position: [number, number, number];
   rotation: number;
+  rotationPitch?: number; // Inclinação vertical para cima / baixo (eixo X) em graus
+  targetRotation?: [number, number, number]; // Coordenadas de rotação capturadas do objeto para teste
+  targetScale?: [number, number, number]; // Coordenadas de escala capturadas do objeto para teste
   parentObjectId?: string; // ID do objeto 3D ao qual o spot está fixado/relativo
   relativePosition?: [number, number, number]; // Coordenadas relativas locais [x, y, z] na superfície do objeto
   surfaceNormal?: [number, number, number]; // Vetor normal da superfície do objeto

@@ -257,6 +257,114 @@ export const App: React.FC = () => {
   const [isSurfaceSnapMode, setIsSurfaceSnapMode] = useState(false);
   const [surfaceSnapTargetObjectId, setSurfaceSnapTargetObjectId] = useState<string | null>(null);
   const [testingMotionSpotId, setTestingMotionSpotId] = useState<string | null>(null);
+  const [testingObjectAction, setTestingObjectAction] = useState<{
+    objectId: string;
+    actionId: string;
+    isPaused?: boolean;
+  } | null>(null);
+
+  // Saved Actions History & Library (persisted in localStorage)
+  const [actionHistory, setActionHistory] = useState<ObjectAction[]>(() => {
+    try {
+      const saved = localStorage.getItem('spotverse_action_history');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [
+      {
+        id: 'hist-girar-360',
+        name: 'Girar 360° Contínuo',
+        motion: {
+          enabled: true,
+          deltaPosition: [0, 0, 0],
+          deltaRotation: [0, 360, 0],
+          turnAngle: 360,
+          curveTrajectory: 'circle_turn',
+          curveRadius: 0.01,
+          speed: 1.0,
+          loop: true,
+          target: 'parent_object',
+        },
+      },
+      {
+        id: 'hist-flutuar-onda',
+        name: 'Flutuação Suave em Onda',
+        motion: {
+          enabled: true,
+          deltaPosition: [0, 0.4, 0],
+          curveTrajectory: 'wave',
+          speed: 0.8,
+          loop: true,
+          target: 'parent_object',
+        },
+      },
+      {
+        id: 'hist-salto-arco',
+        name: 'Salto Parabólico em Arco',
+        motion: {
+          enabled: true,
+          deltaPosition: [0, 0, 3.0],
+          curveHeight: 2.0,
+          curveTrajectory: 'arc',
+          speed: 1.2,
+          loop: true,
+          target: 'parent_object',
+        },
+      },
+    ];
+  });
+
+  const handleSaveActionToHistory = (action: ObjectAction) => {
+    setActionHistory((prev) => {
+      const exists = prev.find((a) => a.name === action.name);
+      const updated = exists
+        ? prev.map((a) => (a.name === action.name ? { ...action, id: `hist-${Date.now()}` } : a))
+        : [{ ...action, id: `hist-${Date.now()}` }, ...prev];
+      try {
+        localStorage.setItem('spotverse_action_history', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    showToast(`Action "${action.name}" salva no histórico de actions!`);
+  };
+
+  const handleRemoveActionFromHistory = (historyId: string) => {
+    setActionHistory((prev) => {
+      const updated = prev.filter((a) => a.id !== historyId);
+      try {
+        localStorage.setItem('spotverse_action_history', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    showToast('Action removida do histórico.');
+  };
+
+  const handleApplyActionFromHistoryToObject = (objectId: string, historyAction: ObjectAction) => {
+    const targetObj = activeRoom.placedObjects.find((o) => o.id === objectId);
+    if (!targetObj) return;
+    const newAct: ObjectAction = {
+      ...historyAction,
+      id: `act-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    };
+    const currentActions = targetObj.actions || [];
+    handleUpdateObjectActions(objectId, [...currentActions, newAct]);
+    showToast(`⚡ Action "${newAct.name}" inserida em "${targetObj.name}" com sucesso!`);
+  };
+
+  const handleToggleTestObjectAction = (objectId: string, actionId: string | null) => {
+    if (!actionId) {
+      setTestingObjectAction(null);
+    } else {
+      setTestingObjectAction({ objectId, actionId, isPaused: false });
+    }
+  };
+
+  const handlePauseTestObjectAction = (objectId: string, actionId: string) => {
+    setTestingObjectAction({ objectId, actionId, isPaused: true });
+  };
+
+  const handleResumeTestObjectAction = (objectId: string, actionId: string) => {
+    setTestingObjectAction({ objectId, actionId, isPaused: false });
+  };
 
   // Restore GLB Blob URLs from IndexedDB on page load/refresh (ensuring full persistence)
   useEffect(() => {
@@ -1168,6 +1276,9 @@ export const App: React.FC = () => {
       type: 'sentar',
       position: worldPos,
       rotation: 0,
+      rotationPitch: 0,
+      targetRotation: parentObj ? [parentObj.rotation[0], parentObj.rotation[1], parentObj.rotation[2]] : undefined,
+      targetScale: parentObj ? [parentObj.scale[0], parentObj.scale[1], parentObj.scale[2]] : undefined,
       parentObjectId: parentId,
       relativePosition: relativePos,
       surfaceNormal: normal,
@@ -1178,10 +1289,114 @@ export const App: React.FC = () => {
         r.id === activeRoomId ? { ...r, spots: [...r.spots, newSpot] } : r
       )
     );
-    setSelectedSpotId(newSpotId);
-    setIsSurfaceSnapMode(false);
-    setSurfaceSnapTargetObjectId(null);
-    showToast(`Spot relativo fixado com sucesso na superfície de "${parentObj?.name || 'Objeto'}"!`);
+    // Keep parent object selected and DO NOT trigger move gizmo on the newly added spot!
+    // Keep surface snap mode active so the user can click multiple times (e.g. 5 times) without teleport or flicker!
+    setSelectedSpotId(null);
+    setSelectedObjectId(parentId);
+    showToast(`Spot fixado na superfície de "${parentObj?.name || 'Objeto'}"!`);
+  };
+
+  const handleCaptureObjectCoordinatesToSpot = (spotId: string, objId: string) => {
+    const obj = activeRoom.placedObjects.find((o) => o.id === objId);
+    if (!obj) return;
+    setRooms((prev) =>
+      prev.map((r) =>
+        r.id === activeRoomId
+          ? {
+              ...r,
+              spots: r.spots.map((s) =>
+                s.id === spotId
+                  ? {
+                      ...s,
+                      targetRotation: [obj.rotation[0], obj.rotation[1], obj.rotation[2]],
+                      targetScale: [obj.scale[0], obj.scale[1], obj.scale[2]],
+                    }
+                  : s
+              ),
+            }
+          : r
+      )
+    );
+    showToast(`📐 Rotação e escala de "${obj.name}" capturadas para o spot!`);
+  };
+
+  const handleCaptureObjectRotationToSpot = (spotId: string, objId: string) => {
+    const obj = activeRoom.placedObjects.find((o) => o.id === objId);
+    if (!obj) return;
+    const degY = Math.round((((obj.rotation[1] * (180 / Math.PI)) % 360) + 360) % 360);
+    const degX = Math.round((((obj.rotation[0] * (180 / Math.PI)) % 360) + 360) % 360);
+    setRooms((prev) =>
+      prev.map((r) =>
+        r.id === activeRoomId
+          ? {
+              ...r,
+              spots: r.spots.map((s) =>
+                s.id === spotId
+                  ? {
+                      ...s,
+                      targetRotation: [obj.rotation[0], obj.rotation[1], obj.rotation[2]],
+                      rotation: degY,
+                      rotationPitch: degX,
+                    }
+                  : s
+              ),
+            }
+          : r
+      )
+    );
+    showToast(`🔄 Coordenada de rotação de "${obj.name}" (${degY}°) gravada no spot!`);
+  };
+
+  const handleCaptureObjectScaleToSpot = (spotId: string, objId: string) => {
+    const obj = activeRoom.placedObjects.find((o) => o.id === objId);
+    if (!obj) return;
+    setRooms((prev) =>
+      prev.map((r) =>
+        r.id === activeRoomId
+          ? {
+              ...r,
+              spots: r.spots.map((s) =>
+                s.id === spotId
+                  ? {
+                      ...s,
+                      targetScale: [obj.scale[0], obj.scale[1], obj.scale[2]],
+                    }
+                  : s
+              ),
+            }
+          : r
+      )
+    );
+    showToast(`📐 Coordenada de escala de "${obj.name}" gravada no spot!`);
+  };
+
+  const handleApplySpotCoordinatesToObject = (spotId: string, objId: string) => {
+    const spot = activeRoom.spots.find((s) => s.id === spotId);
+    if (!spot) return;
+    setRooms((prev) =>
+      prev.map((r) =>
+        r.id === activeRoomId
+          ? {
+              ...r,
+              placedObjects: r.placedObjects.map((obj) =>
+                obj.id === objId
+                  ? {
+                      ...obj,
+                      position: [spot.position[0], spot.position[1], spot.position[2]],
+                      rotation: spot.targetRotation || [
+                        ((spot.rotationPitch || 0) * Math.PI) / 180,
+                        (spot.rotation * Math.PI) / 180,
+                        0,
+                      ],
+                      scale: spot.targetScale || obj.scale,
+                    }
+                  : obj
+              ),
+            }
+          : r
+      )
+    );
+    showToast(`🎯 Coordenadas do spot aplicadas ao objeto "${activeRoom.placedObjects.find((o) => o.id === objId)?.name || 'Objeto'}"!`);
   };
 
   const handleDetachSpotFromObject = (spotId: string) => {
@@ -1596,6 +1811,9 @@ export const App: React.FC = () => {
     const rotDeg = Math.round(
       (((targetObj.rotation[1] * (180 / Math.PI)) % 360) + 360) % 360
     );
+    const rotPitchDeg = Math.round(
+      (((targetObj.rotation[0] * (180 / Math.PI)) % 360) + 360) % 360
+    );
 
     // Exact coordinate of the object
     const newSpot: SpotItem = {
@@ -1608,6 +1826,9 @@ export const App: React.FC = () => {
         parseFloat(targetObj.position[2].toFixed(2)),
       ],
       rotation: rotDeg,
+      rotationPitch: rotPitchDeg,
+      targetRotation: [targetObj.rotation[0], targetObj.rotation[1], targetObj.rotation[2]],
+      targetScale: [targetObj.scale[0], targetObj.scale[1], targetObj.scale[2]],
     };
 
     setRooms((prev) =>
@@ -1706,6 +1927,19 @@ export const App: React.FC = () => {
     );
   };
 
+  const handleUpdateSpotRotationPitch = (id: string, rotationPitch: number) => {
+    setRooms((prev) =>
+      prev.map((r) =>
+        r.id === activeRoomId
+          ? {
+              ...r,
+              spots: r.spots.map((s) => (s.id === id ? { ...s, rotationPitch } : s)),
+            }
+          : r
+      )
+    );
+  };
+
   const handleAvatarTeleport = (spotId: string) => {
     setAvatarCurrentSpotId(spotId);
     const spot = activeRoom.spots.find((s) => s.id === spotId);
@@ -1722,6 +1956,16 @@ export const App: React.FC = () => {
       }
       // Reposition the custom avatar object onto the clicked spot
       const spotAngleRad = (spot.rotation * Math.PI) / 180;
+      const spotPitchRad = ((spot.rotationPitch || 0) * Math.PI) / 180;
+
+      // Apply targetRotation / targetScale if captured from object or rotationPitch
+      const finalRotation: [number, number, number] = spot.targetRotation
+        ? [spot.targetRotation[0], spot.targetRotation[1], spot.targetRotation[2]]
+        : [spotPitchRad, spotAngleRad, targetAvatarObj.rotation[2]];
+      const finalScale: [number, number, number] = spot.targetScale
+        ? [spot.targetScale[0], spot.targetScale[1], spot.targetScale[2]]
+        : targetAvatarObj.scale;
+
       setRooms((prev) =>
         prev.map((r) =>
           r.id === activeRoomId
@@ -1732,7 +1976,8 @@ export const App: React.FC = () => {
                     ? {
                         ...obj,
                         position: [spot.position[0], spot.position[1], spot.position[2]],
-                        rotation: [obj.rotation[0], spotAngleRad, obj.rotation[2]],
+                        rotation: finalRotation,
+                        scale: finalScale,
                       }
                     : obj
                 ),
@@ -2248,6 +2493,20 @@ export const App: React.FC = () => {
             }}
             onAvatarTeleport={handleAvatarTeleport}
             avatarCurrentSpotId={avatarCurrentSpotId}
+            onUpdateSpotRotation={handleUpdateSpotRotation}
+            onUpdateSpotRotationPitch={handleUpdateSpotRotationPitch}
+            onCaptureObjectCoordinatesToSpot={handleCaptureObjectCoordinatesToSpot}
+            onCaptureObjectRotationToSpot={handleCaptureObjectRotationToSpot}
+            onCaptureObjectScaleToSpot={handleCaptureObjectScaleToSpot}
+            onApplySpotCoordinatesToObject={handleApplySpotCoordinatesToObject}
+            onToggleTestObjectAction={handleToggleTestObjectAction}
+            onPauseTestObjectAction={handlePauseTestObjectAction}
+            onResumeTestObjectAction={handleResumeTestObjectAction}
+            testingObjectAction={testingObjectAction}
+            actionHistory={actionHistory}
+            onSaveActionToHistory={handleSaveActionToHistory}
+            onRemoveActionFromHistory={handleRemoveActionFromHistory}
+            onApplyActionFromHistoryToObject={handleApplyActionFromHistoryToObject}
           />
 
           {/* 3D Scene Viewport */}
@@ -2270,6 +2529,11 @@ export const App: React.FC = () => {
               }}
               onUpdateSpotPosition={handleUpdateSpotPosition}
               onUpdateSpotRotation={handleUpdateSpotRotation}
+              onUpdateSpotRotationPitch={handleUpdateSpotRotationPitch}
+              onCaptureObjectCoordinatesToSpot={handleCaptureObjectCoordinatesToSpot}
+              onCaptureObjectRotationToSpot={handleCaptureObjectRotationToSpot}
+              onCaptureObjectScaleToSpot={handleCaptureObjectScaleToSpot}
+              onApplySpotCoordinatesToObject={handleApplySpotCoordinatesToObject}
               onRemoveSpot={handleRemoveSpot}
               onClearAllSpots={handleClearAllSpots}
               onRemoveOverlappingSpots={handleRemoveOverlappingSpots}
@@ -2303,6 +2567,7 @@ export const App: React.FC = () => {
               activeUserAvatar={activeUserAvatar}
               spotVisualConfig={spotVisualConfig}
               onUpdateSpotMotion={handleUpdateSpotMotion}
+              testingObjectAction={testingObjectAction}
               onOpenTrajectoryTimeline={(spotId) => {
                 setTimelineSpotId(spotId);
                 setIsTrajectoryTimelineModalOpen(true);

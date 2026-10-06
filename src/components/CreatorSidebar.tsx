@@ -53,7 +53,9 @@ interface CreatorSidebarProps {
   onUpdateObjectType?: (id: string, type: 'cenario' | 'movel' | 'objeto' | 'avatar' | 'acessorio') => void;
   onUpdateObjectActions?: (objectId: string, actions: ObjectAction[]) => void;
   onToggleTestObjectAction?: (objectId: string, actionId: string | null) => void;
-  testingObjectAction?: { objectId: string; actionId: string } | null;
+  onPauseTestObjectAction?: (objectId: string, actionId: string) => void;
+  onResumeTestObjectAction?: (objectId: string, actionId: string) => void;
+  testingObjectAction?: { objectId: string; actionId: string; isPaused?: boolean } | null;
   onOpenPublicationsModal?: () => void;
   publishedCount?: number;
   onOpenUploadModal: () => void;
@@ -83,6 +85,12 @@ interface CreatorSidebarProps {
   onCancelSurfaceSnap?: () => void;
   isSurfaceSnapMode?: boolean;
   surfaceSnapTargetObjectId?: string | null;
+  onUpdateSpotRotation?: (id: string, rotation: number) => void;
+  onUpdateSpotRotationPitch?: (id: string, rotationPitch: number) => void;
+  onCaptureObjectCoordinatesToSpot?: (spotId: string, objId: string) => void;
+  onCaptureObjectRotationToSpot?: (spotId: string, objId: string) => void;
+  onCaptureObjectScaleToSpot?: (spotId: string, objId: string) => void;
+  onApplySpotCoordinatesToObject?: (spotId: string, objId: string) => void;
   onUpdateSpotMotion?: (spotId: string, motion: SpotMotionConfig | undefined) => void;
   onToggleTestSpotMotion?: (spotId: string) => void;
   testingMotionSpotId?: string | null;
@@ -91,6 +99,10 @@ interface CreatorSidebarProps {
   onOpenTrajectoryTimeline?: (spotId: string) => void;
   onAvatarTeleport?: (spotId: string) => void;
   avatarCurrentSpotId?: string | null;
+  actionHistory?: ObjectAction[];
+  onSaveActionToHistory?: (action: ObjectAction) => void;
+  onRemoveActionFromHistory?: (historyId: string) => void;
+  onApplyActionFromHistoryToObject?: (objectId: string, action: ObjectAction) => void;
 }
 
 export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
@@ -103,7 +115,13 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
   onUpdateObjectType,
   onUpdateObjectActions,
   onToggleTestObjectAction,
+  onPauseTestObjectAction,
+  onResumeTestObjectAction,
   testingObjectAction = null,
+  actionHistory = [],
+  onSaveActionToHistory,
+  onRemoveActionFromHistory,
+  onApplyActionFromHistoryToObject,
   onOpenPublicationsModal,
   publishedCount,
   onOpenUploadModal,
@@ -133,6 +151,12 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
   onCancelSurfaceSnap,
   isSurfaceSnapMode = false,
   surfaceSnapTargetObjectId = null,
+  onUpdateSpotRotation,
+  onUpdateSpotRotationPitch,
+  onCaptureObjectCoordinatesToSpot,
+  onCaptureObjectRotationToSpot,
+  onCaptureObjectScaleToSpot,
+  onApplySpotCoordinatesToObject,
   onUpdateSpotMotion,
   onToggleTestSpotMotion,
   testingMotionSpotId = null,
@@ -516,6 +540,88 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                           Mundo: X: {spot.position[0]}m · Y: {spot.position[1]}m · Z: {spot.position[2]}m
                         </div>
                       )}
+
+                      {/* 1b. Orientação do Spot (Rotação Horizontal e Inclinação Vertical) */}
+                      <div className="p-2.5 rounded-lg bg-black/60 border border-[#d4af37]/30 space-y-2">
+                        <span className="text-[10px] text-[#ffd700] font-bold block">
+                          Orientação do Spot (Rotação e Inclinação):
+                        </span>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <div className="flex items-center justify-between text-[9px] text-zinc-300 mb-0.5">
+                              <span>Horizontal (Yaw)</span>
+                              <span className="font-mono text-[#ffd700]">{spot.rotation || 0}°</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="360"
+                              step="5"
+                              value={spot.rotation || 0}
+                              onChange={(e) => onUpdateSpotRotation?.(spot.id, parseInt(e.target.value) || 0)}
+                              className="w-full accent-[#ffd700] h-1.5 bg-[#20222a] rounded cursor-pointer"
+                              title="Girar para os lados (Yaw)"
+                            />
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between text-[9px] text-zinc-300 mb-0.5">
+                              <span>Vertical (Pitch)</span>
+                              <span className="font-mono text-cyan-300">{spot.rotationPitch || 0}°</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="-90"
+                              max="90"
+                              step="5"
+                              value={spot.rotationPitch || 0}
+                              onChange={(e) => onUpdateSpotRotationPitch?.(spot.id, parseInt(e.target.value) || 0)}
+                              className="w-full accent-cyan-400 h-1.5 bg-[#20222a] rounded cursor-pointer"
+                              title="Inclinar para cima ou para baixo (Pitch)"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Coordenadas para Teste da Room */}
+                        {(spot.targetRotation || spot.targetScale || selectedObjectId) && (
+                          <div className="pt-2 border-t border-[#d4af37]/20 space-y-1.5">
+                            <span className="text-[9px] text-zinc-400 block font-semibold">
+                              Coordenadas de Teste da Room:
+                            </span>
+                            {spot.targetRotation && (
+                              <div className="text-[9px] font-mono text-cyan-300 bg-black/80 px-1.5 py-0.5 rounded border border-cyan-400/30 truncate">
+                                Rotação Alvo: [{spot.targetRotation.map((r) => ((r * 180) / Math.PI).toFixed(0) + '°').join(', ')}]
+                              </div>
+                            )}
+                            {spot.targetScale && (
+                              <div className="text-[9px] font-mono text-purple-300 bg-black/80 px-1.5 py-0.5 rounded border border-purple-400/30 truncate">
+                                Escala Alvo: [{spot.targetScale.map((s) => s.toFixed(2)).join(', ')}]
+                              </div>
+                            )}
+                            <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                              {selectedObjectId && onCaptureObjectCoordinatesToSpot && (
+                                <button
+                                  type="button"
+                                  onClick={() => onCaptureObjectCoordinatesToSpot(spot.id, selectedObjectId)}
+                                  className="px-2 py-1 rounded bg-[#d4af37]/20 hover:bg-[#d4af37] text-[#ffd700] hover:text-black border border-[#d4af37]/50 text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-sm active:scale-95"
+                                  title="Capturar rotação e escala do objeto selecionado para este spot"
+                                >
+                                  <span>📐 Gravar Rotação/Escala do Objeto</span>
+                                </button>
+                              )}
+                              {selectedObjectId && onApplySpotCoordinatesToObject && (
+                                <button
+                                  type="button"
+                                  onClick={() => onApplySpotCoordinatesToObject(spot.id, selectedObjectId)}
+                                  className="px-2 py-1 rounded bg-cyan-950/70 hover:bg-cyan-700 text-cyan-300 hover:text-white border border-cyan-400/50 text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-sm active:scale-95"
+                                  title="Aplicar coordenadas deste spot diretamente no objeto"
+                                >
+                                  <span>🎯 Aplicar no Objeto</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
 
                       {/* 2. Motion Spot Section */}
                       <div className="p-2.5 rounded-lg bg-[#14161f] border border-[#d4af37]/40 space-y-2">
@@ -1247,22 +1353,38 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <div
-                          className={`w-7 h-7 rounded border flex items-center justify-center flex-shrink-0 ${
-                            isAvatarType
-                              ? 'border-[#ffd700] text-[#ffd700] bg-amber-950/50'
-                              : 'border-[#d4af37]/50 text-[#d4af37] bg-[#121317]'
-                          }`}
-                        >
-                          {isAvatarType ? (
-                            <User className="w-4 h-4 text-[#ffd700]" />
-                          ) : obj.modelType === 'sofa' || obj.name.toLowerCase().includes('sofa') ? (
-                            <Armchair className="w-4 h-4" />
-                          ) : obj.name.toLowerCase().includes('cama') || obj.name.toLowerCase().includes('bed') ? (
-                            <Bed className="w-4 h-4" />
-                          ) : (
-                            <Box className="w-4 h-4" />
+                        <div className="flex flex-col items-center gap-1 flex-shrink-0">
+                          {isAvatarType && (
+                            <input
+                              type="checkbox"
+                              checked={isCustomAvatar}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={() => onSetCustomAvatarObjectId?.(isCustomAvatar ? null : obj.id)}
+                              className="w-3.5 h-3.5 accent-[#ffd700] rounded cursor-pointer transition-transform hover:scale-110"
+                              title={
+                                isCustomAvatar
+                                  ? 'Avatar selecionado para teste (clique para desmarcar)'
+                                  : 'Marcar este avatar para teste (desmarcará o avatar anterior)'
+                              }
+                            />
                           )}
+                          <div
+                            className={`w-7 h-7 rounded border flex items-center justify-center flex-shrink-0 ${
+                              isAvatarType
+                                ? 'border-[#ffd700] text-[#ffd700] bg-amber-950/50'
+                                : 'border-[#d4af37]/50 text-[#d4af37] bg-[#121317]'
+                            }`}
+                          >
+                            {isAvatarType ? (
+                              <User className="w-4 h-4 text-[#ffd700]" />
+                            ) : obj.modelType === 'sofa' || obj.name.toLowerCase().includes('sofa') ? (
+                              <Armchair className="w-4 h-4" />
+                            ) : obj.name.toLowerCase().includes('cama') || obj.name.toLowerCase().includes('bed') ? (
+                              <Bed className="w-4 h-4" />
+                            ) : (
+                              <Box className="w-4 h-4" />
+                            )}
+                          </div>
                         </div>
                         <div className="min-w-0 flex-1">
                           {editingObjectId === obj.id ? (
@@ -1374,33 +1496,65 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                           </button>
                         )}
 
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (isCustomAvatar) {
-                              onSetCustomAvatarObjectId?.(null);
-                            } else {
-                              // If setting as custom avatar, also ensure type is avatar
-                              if (!isAvatarType && onUpdateObjectType) {
-                                onUpdateObjectType(obj.id, 'avatar');
-                              }
-                              onSetCustomAvatarObjectId?.(obj.id);
+                        {/* Avatar Test Checkbox & Button (Caixa de marcação para teste) */}
+                        <div className="flex flex-col items-center justify-center gap-0.5" title="Marcar este avatar para teste na sala">
+                          <label
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex items-center gap-1 cursor-pointer select-none px-1 py-0.5 rounded hover:bg-black/40"
+                            title={
+                              isCustomAvatar
+                                ? 'Avatar marcado para teste (clique para desmarcar)'
+                                : 'Marcar este avatar especificamente para teste'
                             }
-                          }}
-                          className={`p-1.5 rounded transition-colors cursor-pointer text-xs ${
-                            isCustomAvatar
-                              ? 'bg-[#d4af37] text-black ring-1 ring-[#ffd700]'
-                              : 'text-[#d4af37]/70 hover:text-[#ffd700] hover:bg-[#d4af37]/20 border border-transparent hover:border-[#d4af37]/40'
-                          }`}
-                          title={
-                            isCustomAvatar
-                              ? 'Avatar atualmente controlado. Clique para soltar.'
-                              : 'Definir este item como avatar interativo (controlado pelos spots)'
-                          }
-                        >
-                          <User className="w-3.5 h-3.5" />
-                        </button>
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isCustomAvatar}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                if (isCustomAvatar) {
+                                  onSetCustomAvatarObjectId?.(null);
+                                } else {
+                                  if (!isAvatarType && onUpdateObjectType) {
+                                    onUpdateObjectType(obj.id, 'avatar');
+                                  }
+                                  onSetCustomAvatarObjectId?.(obj.id);
+                                }
+                              }}
+                              className="w-3 h-3 accent-[#ffd700] rounded cursor-pointer"
+                            />
+                            <span className={`text-[8px] font-bold uppercase tracking-wider ${isCustomAvatar ? 'text-[#ffd700]' : 'text-zinc-500'}`}>
+                              {isCustomAvatar ? 'Teste' : 'Testar'}
+                            </span>
+                          </label>
+
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (isCustomAvatar) {
+                                onSetCustomAvatarObjectId?.(null);
+                              } else {
+                                if (!isAvatarType && onUpdateObjectType) {
+                                  onUpdateObjectType(obj.id, 'avatar');
+                                }
+                                onSetCustomAvatarObjectId?.(obj.id);
+                              }
+                            }}
+                            className={`p-1.5 rounded transition-colors cursor-pointer text-xs ${
+                              isCustomAvatar
+                                ? 'bg-[#d4af37] text-black ring-1 ring-[#ffd700]'
+                                : 'text-[#d4af37]/70 hover:text-[#ffd700] hover:bg-[#d4af37]/20 border border-transparent hover:border-[#d4af37]/40'
+                            }`}
+                            title={
+                              isCustomAvatar
+                                ? 'Avatar marcado para teste na cena. Clique para desmarcar.'
+                                : 'Definir este item como avatar interativo (controlado pelos spots)'
+                            }
+                          >
+                            <User className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
 
                         <button
                           type="button"
@@ -1911,29 +2065,74 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                               </div>
 
                               <div className="flex items-center gap-1 flex-shrink-0">
-                                {/* Play / Stop Test Button */}
-                                {onToggleTestObjectAction && (
+                                {/* Play / Pause / Stop Test Controls */}
+                                {onToggleTestObjectAction && (() => {
+                                  const isPaused = isTesting && testingObjectAction?.isPaused;
+                                  return (
+                                    <div className="flex items-center gap-1">
+                                      {isTesting ? (
+                                        <>
+                                          {isPaused ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                if (onResumeTestObjectAction) {
+                                                  onResumeTestObjectAction(targetObj.id, act.id);
+                                                } else {
+                                                  onToggleTestObjectAction(targetObj.id, act.id);
+                                                }
+                                              }}
+                                              className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-400 hover:bg-amber-300 text-black flex items-center gap-1 cursor-pointer shadow-sm transition-all"
+                                              title="Continuar movimento do objeto a partir de onde pausou"
+                                            >
+                                              <Play className="w-3 h-3 fill-black" />
+                                              <span>Continuar</span>
+                                            </button>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={() => onPauseTestObjectAction?.(targetObj.id, act.id)}
+                                              className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-400 hover:bg-amber-300 text-black flex items-center gap-1 cursor-pointer shadow-sm transition-all"
+                                              title="Pausar o objeto no ponto atual para ajustar de acordo"
+                                            >
+                                              <span className="font-mono font-black text-xs leading-none">⏸</span>
+                                              <span>Pausar</span>
+                                            </button>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() => onToggleTestObjectAction(targetObj.id, null)}
+                                            className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-800 hover:bg-red-700 text-white flex items-center gap-1 cursor-pointer shadow-sm transition-all"
+                                            title="Parar teste e retornar à posição de repouso"
+                                          >
+                                            <Square className="w-2.5 h-2.5 fill-white" />
+                                            <span>Parar</span>
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => onToggleTestObjectAction(targetObj.id, act.id)}
+                                          className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-700 hover:bg-cyan-600 text-white flex items-center gap-1 cursor-pointer shadow-sm transition-all"
+                                          title="Iniciar movimento deste objeto na cena 3D"
+                                        >
+                                          <Play className="w-3 h-3 fill-white" />
+                                          <span>Iniciar</span>
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+
+                                {/* Save to History / Library */}
+                                {onSaveActionToHistory && (
                                   <button
                                     type="button"
-                                    onClick={() => onToggleTestObjectAction(targetObj.id, isTesting ? null : act.id)}
-                                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer shadow-sm ${
-                                      isTesting
-                                        ? 'bg-cyan-400 text-black ring-1 ring-cyan-200 animate-pulse font-black'
-                                        : 'bg-cyan-700 hover:bg-cyan-600 text-white'
-                                    }`}
-                                    title={isTesting ? 'Parar animação' : 'Executar e testar na cena 3D'}
+                                    onClick={() => onSaveActionToHistory(act)}
+                                    className="p-1 rounded text-amber-300 hover:text-white hover:bg-amber-400/20 transition-colors"
+                                    title="Salvar esta action no Histórico/Biblioteca para reutilizar em outros objetos com 1 clique"
                                   >
-                                    {isTesting ? (
-                                      <>
-                                        <Square className="w-3 h-3 fill-black" />
-                                        <span>Parar</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <Play className="w-3 h-3 fill-white" />
-                                        <span>Testar</span>
-                                      </>
-                                    )}
+                                    <Download className="w-3 h-3" />
                                   </button>
                                 )}
 
@@ -1964,7 +2163,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                                   type="button"
                                   onClick={() => handleRemoveActionItem(act.id)}
                                   className="p-1 rounded text-red-400 hover:text-red-200 hover:bg-red-950/60"
-                                  title="Excluir action"
+                                  title="Remover esta action do objeto"
                                 >
                                   <Trash2 className="w-3 h-3" />
                                 </button>
@@ -1979,6 +2178,70 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                       })}
                     </div>
                   )}
+
+                  {/* Section: HISTÓRICO E BIBLIOTECA DE ACTIONS USADAS */}
+                  <div className="mt-4 pt-3 border-t border-[#d4af37]/30 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                        <Layers className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Histórico / Biblioteca de Actions</span>
+                      </span>
+                      <span className="text-[10px] text-zinc-400 font-mono">
+                        {actionHistory.length} salvas
+                      </span>
+                    </div>
+
+                    <p className="text-[10px] text-zinc-400 leading-tight">
+                      Actions salvas podem ser inseridas neste objeto com 1 clique, sem precisar refazer configurações:
+                    </p>
+
+                    {actionHistory.length === 0 ? (
+                      <div className="p-2.5 rounded border border-dashed border-[#d4af37]/30 bg-black/30 text-center text-[10px] text-zinc-400">
+                        Nenhuma action no histórico ainda. Ao criar uma action, clique no ícone de salvar para reutilizá-la aqui!
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5 max-h-[180px] overflow-y-auto pr-1 custom-scrollbar">
+                        {actionHistory.map((histAct) => (
+                          <div
+                            key={histAct.id}
+                            className="p-2 rounded bg-black/60 border border-amber-400/30 flex items-center justify-between gap-1.5 text-xs hover:border-amber-400/60 transition-colors"
+                          >
+                            <div className="min-w-0">
+                              <span className="text-xs font-semibold text-white block truncate">
+                                {histAct.name}
+                              </span>
+                              <span className="text-[9px] text-amber-200 uppercase font-mono block">
+                                {histAct.motion.curveTrajectory || 'linear'} · Vel: {histAct.motion.speed || 1}x
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              {onApplyActionFromHistoryToObject && targetObj && (
+                                <button
+                                  type="button"
+                                  onClick={() => onApplyActionFromHistoryToObject(targetObj.id, histAct)}
+                                  className="px-2 py-0.5 rounded bg-[#ffd700] hover:bg-amber-300 text-black text-[10px] font-bold flex items-center gap-0.5 cursor-pointer shadow-sm active:scale-95"
+                                  title={`Inserir esta action em "${targetObj.name}"`}
+                                >
+                                  <span>+ Inserir</span>
+                                </button>
+                              )}
+                              {onRemoveActionFromHistory && (
+                                <button
+                                  type="button"
+                                  onClick={() => onRemoveActionFromHistory(histAct.id)}
+                                  className="p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-red-950/40"
+                                  title="Remover da biblioteca"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
             </div>
