@@ -54,6 +54,8 @@ export const App: React.FC = () => {
   // Navigation State between Editor, Rooms Lobby, Social Room, and User Customization/Loja
   const [currentScreen, setCurrentScreen] = useState<'editor' | 'lobby' | 'room' | 'customization'>('lobby');
   const [customizationInitialTab, setCustomizationInitialTab] = useState<'loja' | 'inventario' | 'poses'>('inventario');
+  const [customizationPreviewItemId, setCustomizationPreviewItemId] = useState<string | null>(null);
+  const [customizationPreviewAvatarId, setCustomizationPreviewAvatarId] = useState<string | null>(null);
   const [lobbyRoomIndex, setLobbyRoomIndex] = useState<number>(1);
   const [selectedLobbyRoom, setSelectedLobbyRoom] = useState<RoomData | null>(null);
 
@@ -348,6 +350,7 @@ export const App: React.FC = () => {
   };
 
   const handleUpdateObjectActions = (objectId: string, actions: ObjectAction[]) => {
+    const placedObject = activeRoom.placedObjects.find((obj) => obj.id === objectId);
     setRooms((prev) =>
       prev.map((r) =>
         r.id === activeRoomId
@@ -360,6 +363,15 @@ export const App: React.FC = () => {
           : r
       )
     );
+    if (placedObject) {
+      setInventory((prev) =>
+          prev.map((item) =>
+            item.id === placedObject.assetId || item.assetId === placedObject.assetId
+              ? { ...item, actions }
+              : item
+          )
+      );
+    }
   };
 
   const handleApplyActionFromHistoryToObject = (objectId: string, historyAction: ObjectAction) => {
@@ -566,6 +578,47 @@ export const App: React.FC = () => {
   useEffect(() => {
     safeLocalStorageSet('3d_social_creator_store_avatars', JSON.stringify(sanitizeItemsForStorage(storeAvatars)));
   }, [storeAvatars]);
+
+  useEffect(() => {
+    const actionSources = rooms.flatMap((room) => room.placedObjects);
+    const findActionSource = (assetIds: Array<string | undefined>) => {
+      const matchingObjects = actionSources.filter(
+        (object) => assetIds.some((assetId) => assetId && object.assetId === assetId) &&
+          object.actions !== undefined
+      );
+      return (
+        matchingObjects.find((object) => object.id === selectedObjectId) ||
+        matchingObjects.find((object) => object.actions?.length) ||
+        matchingObjects[0]
+      );
+    };
+
+    setInventory((prev) => {
+      let changed = false;
+      const updated = prev.map((item) => {
+        const source = findActionSource([item.id, item.assetId]);
+        if (!source || JSON.stringify(item.actions || []) === JSON.stringify(source.actions || [])) {
+          return item;
+        }
+        changed = true;
+        return { ...item, actions: source.actions || [] };
+      });
+      return changed ? updated : prev;
+    });
+
+    setStoreAvatars((prev) => {
+      let changed = false;
+      const updated = prev.map((avatar) => {
+        const source = findActionSource([avatar.assetId, avatar.originalItemId]);
+        if (!source || JSON.stringify(avatar.actions || []) === JSON.stringify(source.actions || [])) {
+          return avatar;
+        }
+        changed = true;
+        return { ...avatar, actions: source.actions || [] };
+      });
+      return changed ? updated : prev;
+    });
+  }, [inventory, rooms, selectedObjectId, storeAvatars]);
 
   useEffect(() => {
     safeLocalStorageSet('3d_social_creator_poses', JSON.stringify(avatarPoses));
@@ -990,7 +1043,16 @@ export const App: React.FC = () => {
   };
 
   const handlePublishInventoryItemToStore = (invItem: InventoryItem) => {
-    setPublishingItem(invItem);
+    const matchingObjects = activeRoom.placedObjects.filter(
+      (object) => object.assetId === invItem.id || object.assetId === invItem.assetId
+    );
+    const actionSource =
+      matchingObjects.find((object) => object.id === selectedObjectId && object.actions?.length) ||
+      matchingObjects.find((object) => object.actions?.length);
+    setPublishingItem({
+      ...invItem,
+      actions: actionSource?.actions || invItem.actions,
+    });
     setIsPublishItemModalOpen(true);
   };
 
@@ -1068,6 +1130,11 @@ export const App: React.FC = () => {
       };
 
       setCustomizationItems((prev) => [newAccessoryItem, ...prev.filter((i) => i.id !== newAccessoryItem.id)]);
+      if (newAccessoryItem.actions?.length) {
+        setCustomizationPreviewItemId(newAccessoryItem.id);
+        setCustomizationInitialTab('loja');
+        setCurrentScreen('customization');
+      }
       showToast(`Acessório "${newAccessoryItem.name}" publicado com sucesso com ${newAccessoryItem.actions?.length || 0} ações configuradas!`);
     } else if (payload.objectType === 'pose') {
       const newPose: AvatarPoseConfig = {
@@ -1107,9 +1174,15 @@ export const App: React.FC = () => {
         assetId: payload.item.assetId || (payload.item.id.startsWith('inv-') ? undefined : payload.item.id),
         originalItemId: payload.item.id,
         description: payload.description,
+        actions: payload.actions || [],
       };
 
       setStoreAvatars((prev) => [newAvatar, ...prev.filter((a) => a.name !== payload.name)]);
+      if (newAvatar.actions?.length) {
+        setCustomizationPreviewAvatarId(newAvatar.id);
+        setCustomizationInitialTab('loja');
+        setCurrentScreen('customization');
+      }
     } else if (payload.objectType === 'sala') {
       const roomMatch = rooms.find(
         (r) => r.sceneAssetId === payload.item.id || r.sceneAssetBlobUrl === payload.item.fileBlobUrl
@@ -1144,6 +1217,11 @@ export const App: React.FC = () => {
       };
 
       setCustomizationItems((prev) => [newCustomItem, ...prev.filter((i) => i.id !== newCustomItem.id)]);
+      if (newCustomItem.actions?.length) {
+        setCustomizationPreviewItemId(newCustomItem.id);
+        setCustomizationInitialTab('loja');
+        setCurrentScreen('customization');
+      }
     }
 
     // 3. Update inventory item
@@ -2330,6 +2408,10 @@ export const App: React.FC = () => {
           onAcquireStoreAvatar={handleAcquireStoreAvatar}
           onAcquireCustomItem={handleAcquireCustomItem}
           onPublishCustomItem={handlePublishCustomItem}
+          previewStoreItemId={customizationPreviewItemId}
+          onStoreItemPreviewed={() => setCustomizationPreviewItemId(null)}
+          previewStoreAvatarId={customizationPreviewAvatarId}
+          onStoreAvatarPreviewed={() => setCustomizationPreviewAvatarId(null)}
           onSelectActiveAvatar={handleSelectActiveAvatar}
           onPublishPose={handlePublishPose}
           onAcquirePose={handleAcquirePose}

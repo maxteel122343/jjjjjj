@@ -39,6 +39,7 @@ export async function persistStoreItem(
         rarity: payload.rarity || 'RARO',
         tags: payload.hashtags || ['#avatar', '#3d'],
         thumb: payload.thumbnailUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
+        actions: payload.actions || [],
         author: user?.displayName || payload.author || 'Luzenne',
         isUserPublished: true,
         owned: true,
@@ -438,6 +439,7 @@ export async function fetchPublicStoreItems(): Promise<{
             fileBlobUrl: undefined, // URLs assinadas são resolvidas sob demanda via /resolve
             originalItemId: extractedUuid || row.metadata?.originalItemId || row.id,
             isMissingAsset: hasMissingAsset,
+            actions: row.metadata?.actions || [],
           });
         } else if (row.object_type === 'pose') {
           poses.push({
@@ -1001,4 +1003,3 @@ CREATE POLICY "Criadores podem publicar salas na vitrine" ON public.showcase_roo
   sql += `\n-- Fim do script de persistência. Suas salas e itens agora estarão salvos no Supabase!`;
   return sql;
 }
-

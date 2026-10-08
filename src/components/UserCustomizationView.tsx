@@ -25,6 +25,7 @@ import {
   ShieldAlert,
   Compass,
   Activity,
+  Minimize2,
   CheckCircle2,
   Layers,
   GripVertical,
@@ -77,9 +78,16 @@ interface UserCustomizationViewProps {
   ) => void;
   onSaveToInventory?: (item: CustomizationItem | StoreAvatar | AvatarPoseConfig) => void;
   onOpenPublicationsModal?: () => void;
+  previewStoreItemId?: string | null;
+  onStoreItemPreviewed?: () => void;
+  previewStoreAvatarId?: string | null;
+  onStoreAvatarPreviewed?: () => void;
 }
 
 import { safeLocalStorageSet } from '../lib/storageUtils';
+
+const isAccessoryItem = (item: Pick<CustomizationItem, 'isAccessory' | 'category'>) =>
+  item.isAccessory ?? item.category === 'acessorios';
 
 export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   onBackToLobby,
@@ -107,9 +115,14 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   onSyncPublicStoreItems,
   onOpenPublicationsModal,
   onSaveToInventory,
+  previewStoreItemId,
+  onStoreItemPreviewed,
+  previewStoreAvatarId,
+  onStoreAvatarPreviewed,
 }: UserCustomizationViewProps) => {
   // Navigation Tabs: 'loja' | 'inventario' | 'poses'
   const [activeTab, setActiveTab] = useState<'loja' | 'inventario' | 'poses'>(initialTab);
+  const [isPedestalFocusMode, setIsPedestalFocusMode] = useState(false);
 
   // Currencies state
   const [coins, setCoins] = useState<number>(2450);
@@ -305,9 +318,11 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   // ACESSÓRIOS & ACTIONS & ISOLATED OBJECT INSPECTION
   const [selectedItemToInspect, setSelectedItemToInspect] = useState<CustomizationItem | null>(null);
   const [selectedAccessoryId, setSelectedAccessoryId] = useState<string | null>(null);
+  const [openActionMenuItemId, setOpenActionMenuItemId] = useState<string | null>(null);
   const [gizmoMode, setGizmoMode] = useState<'mover' | 'rodar' | 'escalar'>('mover');
   const [isPositionLocked, setIsPositionLocked] = useState<boolean>(false);
   const [activeAction, setActiveAction] = useState<ObjectAction | null>(null);
+  const [isActionPanelMinimized, setIsActionPanelMinimized] = useState(false);
 
   // Categories in Inventário (including Acessórios!)
   const [searchQueryInventory, setSearchQueryInventory] = useState('');
@@ -325,9 +340,6 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   // Modal de publicação
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [newPublishName, setNewPublishName] = useState('');
-  const [newPublishCategory, setNewPublishCategory] = useState<
-    'chapeus' | 'casacos' | 'sapatos' | 'acessorios' | 'outros'
-  >('acessorios');
   const [newPublishPrice, setNewPublishPrice] = useState(0);
   const [publishMode, setPublishMode] = useState<'simples' | 'avancado'>('simples');
   const [publishObjectType, setPublishObjectType] = useState<StoreObjectType>('acessorio');
@@ -396,7 +408,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
     if (!matchesSearch) return false;
 
     if (selectedCategory === 'todos') return true;
-    if (selectedCategory === 'acessorios') return item.isAccessory || item.category === 'acessorios';
+    if (selectedCategory === 'acessorios') return isAccessoryItem(item);
     return (item.category as string) === (selectedCategory as string);
   });
 
@@ -432,7 +444,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   // Filter items in Loja (Store Items & Community Published): ONLY real published items
   const publishedCommunityItems = customizationItems.filter((i) => {
     if (!isRealPublishedItem(i)) return false;
-    const isAccessory = i.isAccessory || i.category === 'acessorios';
+    const isAccessory = isAccessoryItem(i);
     if (selectedLojaCategory === 'avatar' || selectedLojaCategory === 'poses') return false;
     if (selectedLojaCategory === 'acessorios' && !isAccessory) return false;
     if (selectedLojaCategory === 'itens' && isAccessory) return false;
@@ -474,6 +486,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
         thumb: invMatch.thumbUrl,
         fileBlobUrl: invMatch.fileBlobUrl,
         isAccessory: true,
+        actions: invMatch.actions,
         owned: true,
         equipped: true,
         price: 0,
@@ -485,14 +498,57 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
   }, [selectedAccessoryId, customizationItems, publishedCommunityItems, selectedItemToInspect, userInventory, user]);
 
   // Active actions available for currently inspected item or accessory
-  const activeItemActions: ObjectAction[] =
-    selectedItemToInspect?.actions ||
-    activeSelectedAccessory?.actions ||
-    [];
+  const activeStoreAvatar = storeAvatars.find((avatar) => avatar.id === selectedAvatarId);
+  const activeItemActions: ObjectAction[] = selectedItemToInspect
+    ? selectedItemToInspect.actions || []
+    : selectedAccessoryId
+    ? activeSelectedAccessory?.actions || []
+    : activeStoreAvatar?.actions || [];
+
+  const handleRunAvatarAction = (avatar: StoreAvatar, action: ObjectAction) => {
+    setSelectedAvatarId(avatar.id);
+    setSelectedItemToInspect(null);
+    setSelectedAccessoryId(null);
+    setActiveAction(action);
+    setIsActionPanelMinimized(false);
+    setOpenActionMenuItemId(null);
+    showToast(`⚡ Executando Action "${action.name}" no avatar do pedestal!`);
+  };
+
+  useEffect(() => {
+    if (!previewStoreItemId) return;
+    const item = customizationItems.find((candidate) => candidate.id === previewStoreItemId);
+    if (!item) return;
+
+    setActiveTab('loja');
+    if (isAccessoryItem(item)) {
+      setSelectedItemToInspect(null);
+      setSelectedAccessoryId(item.id);
+      setIsPositionLocked(Boolean(item.isLockedPosition));
+    } else {
+      setSelectedAccessoryId(null);
+      setSelectedItemToInspect(item);
+    }
+    setActiveAction(item.actions?.[0] || null);
+    onStoreItemPreviewed?.();
+  }, [previewStoreItemId, customizationItems, onStoreItemPreviewed]);
+
+  useEffect(() => {
+    if (!previewStoreAvatarId) return;
+    const avatar = storeAvatars.find((candidate) => candidate.id === previewStoreAvatarId);
+    if (!avatar) return;
+
+    setActiveTab('loja');
+    setSelectedAvatarId(avatar.id);
+    setSelectedItemToInspect(null);
+    setSelectedAccessoryId(null);
+    setActiveAction(null);
+    onStoreAvatarPreviewed?.();
+  }, [previewStoreAvatarId, storeAvatars, onStoreAvatarPreviewed]);
 
   // Handling item click in Inventário or Loja
   const handleSelectItem = (item: CustomizationItem) => {
-    const isAcc = item.isAccessory || item.category === 'acessorios';
+    const isAcc = isAccessoryItem(item);
     if (isAcc) {
       // 1. Acessório: Anexa ao avatar e abre o Gizmo
       setSelectedItemToInspect(null);
@@ -777,11 +833,21 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
       sourceBlobUrl = URL.createObjectURL(fileBlobToStore);
     }
 
-    const newItem: Partial<CustomizationItem> = {
+    const category: CustomizationItem['category'] = isAccessory
+      ? 'acessorios'
+      : publishObjectType === 'avatar'
+      ? 'avatares'
+      : publishObjectType === 'sala'
+      ? 'salas'
+      : publishObjectType === 'moveis'
+      ? 'mobilia'
+      : 'itens';
+
+    const newItem: CustomizationItem = {
       id: generatedItemId,
       code: `#${isAccessory ? 'AC' : 'P'}${Math.floor(100 + Math.random() * 900)}`,
       name: newPublishName.trim(),
-      category: isAccessory ? 'acessorios' : newPublishCategory,
+      category,
       thumb: finalThumb,
       owned: true,
       equipped: isAccessory,
@@ -844,7 +910,11 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
       setSelectedAccessoryId(newItem.id);
       setSelectedItemToInspect(null);
       setIsPositionLocked(false);
+    } else {
+      setSelectedAccessoryId(null);
+      setSelectedItemToInspect(newItem);
     }
+    setActiveAction(publishActions[0] || null);
     setShowPublishModal(false);
     setNewPublishName('');
     setPublishUploadedFile(null);
@@ -964,6 +1034,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
           <button
             type="button"
             onClick={() => {
+              setIsPedestalFocusMode(false);
               setActiveTab('loja');
               setSelectedItemToInspect(null);
             }}
@@ -982,6 +1053,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
           <button
             type="button"
             onClick={() => {
+              setIsPedestalFocusMode(false);
               setActiveTab('inventario');
               setSelectedItemToInspect(null);
             }}
@@ -1000,6 +1072,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
           <button
             type="button"
             onClick={() => {
+              setIsPedestalFocusMode(false);
               setActiveTab('poses');
               setSelectedItemToInspect(null);
             }}
@@ -1013,6 +1086,17 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
             {activeTab === 'poses' && (
               <span className="absolute bottom-0 inset-x-0 h-0.5 bg-[#d4af37] shadow-[0_0_8px_#d4af37]" />
             )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsPedestalFocusMode((focused) => !focused)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-cyan-400/40 bg-cyan-950/30 hover:bg-cyan-900/50 text-cyan-200 text-xs font-bold transition-all cursor-pointer"
+            title={isPedestalFocusMode ? 'Mostrar loja, inventário e poses' : 'Recolher as listas laterais e ampliar o pedestal'}
+            aria-pressed={isPedestalFocusMode}
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+            <span>{isPedestalFocusMode ? 'Mostrar abas' : 'Foco no pedestal'}</span>
           </button>
         </nav>
 
@@ -1073,6 +1157,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
       {/* MAIN VIEWPORT: 3 COLUMNS */}
       <div className="flex-1 flex overflow-hidden">
         {/* LEFT COLUMN: INVENTÁRIO OU LOJA */}
+        {!isPedestalFocusMode && (
         <div className="w-full md:w-[420px] lg:w-[460px] border-r border-[#262833]/80 bg-[#0d0e12] flex flex-col overflow-hidden flex-shrink-0">
           {activeTab === 'inventario' ? (
             /* TAB: INVENTÁRIO */
@@ -1185,13 +1270,51 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                                 className="w-full h-full object-cover filter contrast-110 group-hover:scale-105 transition-transform duration-300"
                                 referrerPolicy="no-referrer"
                               />
+                              {!!av.actions?.length && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOpenActionMenuItemId((openId) =>
+                                      openId === av.id ? null : av.id
+                                    );
+                                  }}
+                                  className="absolute top-1 right-1 flex items-center gap-1 px-1.5 py-1 rounded-lg bg-cyan-950/95 border border-cyan-400/70 text-[10px] font-bold text-cyan-200 hover:bg-cyan-800 shadow-lg cursor-pointer"
+                                  title={`Ver actions 3D de ${av.name}`}
+                                  aria-label={`Ver actions 3D de ${av.name}`}
+                                  aria-expanded={openActionMenuItemId === av.id}
+                                >
+                                  <Activity className="w-3.5 h-3.5" />
+                                  <span>{av.actions.length}</span>
+                                </button>
+                              )}
                               {av.applied && (
-                                <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded bg-[#ffd700] text-black text-[9px] font-bold shadow-md flex items-center gap-1">
+                                <div className={`absolute top-1.5 ${av.actions?.length ? 'left-1.5' : 'right-1.5'} px-1.5 py-0.5 rounded bg-[#ffd700] text-black text-[9px] font-bold shadow-md flex items-center gap-1`}>
                                   <span>⭐</span>
                                   <span>EM USO</span>
                                 </div>
                               )}
                             </div>
+
+                            {openActionMenuItemId === av.id && !!av.actions?.length && (
+                              <div
+                                className="mb-2 p-1.5 rounded-lg bg-cyan-950/70 border border-cyan-400/50 space-y-1"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {av.actions.map((action) => (
+                                  <button
+                                    key={action.id}
+                                    type="button"
+                                    onClick={() => handleRunAvatarAction(av, action)}
+                                    className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-black/50 hover:bg-cyan-900 text-left text-[10px] font-bold text-cyan-100 border border-cyan-500/30 cursor-pointer"
+                                    title={`Testar ${action.name} no pedestal`}
+                                  >
+                                    <span>▶</span>
+                                    <span className="truncate">{action.name}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
 
                             <p className="text-[11px] font-semibold text-zinc-200 truncate mt-1 text-center">
                               {av.name}
@@ -1253,7 +1376,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                       <span className="text-xs font-bold text-zinc-400">Acessórios de Avatar</span>
                     </div>
                     {filteredInventoryItems.map((item) => {
-                      const isAcc = item.isAccessory || item.category === 'acessorios';
+                      const isAcc = isAccessoryItem(item);
                       const isInspectingThis = selectedItemToInspect?.id === item.id;
                       const isSelectedAcc = selectedAccessoryId === item.id;
 
@@ -1288,16 +1411,52 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                               referrerPolicy="no-referrer"
                             />
                             {item.equipped && (
-                              <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[#d4af37] text-black flex items-center justify-center text-[10px] font-bold shadow-md">
+                              <div className={`absolute top-1.5 ${item.actions?.length ? 'left-1.5' : 'right-1.5'} w-4 h-4 rounded-full bg-[#d4af37] text-black flex items-center justify-center text-[10px] font-bold shadow-md`}>
                                 ✓
                               </div>
                             )}
-                            {item.actions && item.actions.length > 0 && (
-                              <div className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-cyan-950/80 border border-cyan-400/50 text-[9px] font-bold text-cyan-300">
-                                ⚡ {item.actions.length} action(s)
-                              </div>
+                            {!!item.actions?.length && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setOpenActionMenuItemId((openId) => openId === item.id ? null : item.id);
+                                }}
+                                className="absolute top-1 right-1 flex items-center gap-1 px-1.5 py-1 rounded-lg bg-cyan-950/95 border border-cyan-400/70 text-[10px] font-bold text-cyan-200 hover:bg-cyan-800 shadow-lg cursor-pointer"
+                                title={`Ver ações 3D de ${item.name}`}
+                                aria-label={`Ver ações 3D de ${item.name}`}
+                                aria-expanded={openActionMenuItemId === item.id}
+                              >
+                                <Activity className="w-3.5 h-3.5" />
+                                <span>{item.actions.length}</span>
+                              </button>
                             )}
                           </div>
+
+                          {openActionMenuItemId === item.id && !!item.actions?.length && (
+                            <div
+                              className="mb-2 p-1.5 rounded-lg bg-cyan-950/70 border border-cyan-400/50 space-y-1"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {item.actions.map((action) => (
+                                <button
+                                  key={action.id}
+                                  type="button"
+                                  onClick={() => {
+                                    handleSelectItem(item);
+                                    setActiveAction(action);
+                                    setIsActionPanelMinimized(false);
+                                    showToast(`Executando "${action.name}" no pedestal.`);
+                                  }}
+                                  className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-black/50 hover:bg-cyan-900 text-left text-[10px] font-bold text-cyan-100 border border-cyan-500/30 cursor-pointer"
+                                  title={`Executar ${action.name}`}
+                                >
+                                  <span>▶</span>
+                                  <span className="truncate">{action.name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
 
                           <p className="text-[11px] font-medium text-zinc-200 truncate mt-1 text-center">
                             {item.name}
@@ -1460,6 +1619,8 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                               category: item.type === 'Avatar' ? 'avatares' : item.type === 'Sala' ? 'salas' : 'itens',
                               thumb: item.thumbUrl,
                               fileBlobUrl: item.fileBlobUrl,
+                              originalItemId: item.assetId || item.id,
+                              actions: item.actions,
                               isAvatar: item.type === 'Avatar',
                               isAccessory: item.type === 'Acessorio',
                               owned: true,
@@ -1496,6 +1657,11 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                                 <span className="text-zinc-500 text-xs">Sem Foto</span>
                               </div>
                             )}
+                            {!!item.actions?.length && (
+                              <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-cyan-950/90 border border-cyan-400/60 text-[9px] font-bold text-cyan-200">
+                                ⚡ {item.actions.length} ações 3D
+                              </span>
+                            )}
                           </div>
 
                           <p className="text-[11px] font-medium text-zinc-200 truncate mt-1 text-center">
@@ -1507,7 +1673,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                               type="button"
                               className="w-full py-1 rounded text-[10px] font-bold bg-[#ffd700] text-black hover:brightness-110 cursor-pointer"
                             >
-                              Inspecionar no Pedestal
+                              {item.actions?.length ? '⚡ Ver e testar no pedestal' : 'Inspecionar no Pedestal'}
                             </button>
                           </div>
                         </div>
@@ -1636,12 +1802,50 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                                 className="w-full h-full object-cover filter contrast-105 group-hover:scale-105 transition-transform duration-300"
                                 referrerPolicy="no-referrer"
                               />
+                              {!!av.actions?.length && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOpenActionMenuItemId((openId) =>
+                                      openId === av.id ? null : av.id
+                                    );
+                                  }}
+                                  className="absolute top-1 right-1 flex items-center gap-1 px-1.5 py-1 rounded-lg bg-cyan-950/95 border border-cyan-400/70 text-[10px] font-bold text-cyan-200 hover:bg-cyan-800 shadow-lg cursor-pointer"
+                                  title={`Ver actions 3D de ${av.name}`}
+                                  aria-label={`Ver actions 3D de ${av.name}`}
+                                  aria-expanded={openActionMenuItemId === av.id}
+                                >
+                                  <Activity className="w-3.5 h-3.5" />
+                                  <span>{av.actions.length}</span>
+                                </button>
+                              )}
                               {isSelected && (
-                                <div className="absolute top-1.5 right-1.5 text-[#ffd700]">
+                                <div className={`absolute top-1.5 ${av.actions?.length ? 'left-1.5' : 'right-1.5'} text-[#ffd700]`}>
                                   <Check className="w-4 h-4 stroke-[3]" />
                                 </div>
                               )}
                             </div>
+
+                            {openActionMenuItemId === av.id && !!av.actions?.length && (
+                              <div
+                                className="mb-2 p-1.5 rounded-lg bg-cyan-950/70 border border-cyan-400/50 space-y-1"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {av.actions.map((action) => (
+                                  <button
+                                    key={action.id}
+                                    type="button"
+                                    onClick={() => handleRunAvatarAction(av, action)}
+                                    className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-black/50 hover:bg-cyan-900 text-left text-[10px] font-bold text-cyan-100 border border-cyan-500/30 cursor-pointer"
+                                    title={`Testar ${action.name} no pedestal`}
+                                  >
+                                    <span>▶</span>
+                                    <span className="truncate">{action.name}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
 
                             <h3 className="text-xs font-serif font-bold text-zinc-100 truncate mb-1">
                               {av.name}
@@ -1724,7 +1928,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
 
                   <div className="grid grid-cols-2 gap-3">
                     {publishedCommunityItems.map((item) => {
-                      const isAcc = item.isAccessory || item.category === 'acessorios';
+                      const isAcc = isAccessoryItem(item);
                       const isInspecting = selectedItemToInspect?.id === item.id;
                       const isSelectedAcc = selectedAccessoryId === item.id;
 
@@ -1748,10 +1952,21 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                             <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/80 border border-[#d4af37]/60 text-[9px] font-bold text-[#ffd700]">
                               {isAcc ? '👑 ACESSÓRIO' : 'CRIADOR'}
                             </span>
-                            {item.actions && item.actions.length > 0 && (
-                              <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-cyan-950/90 border border-cyan-400/60 text-[9px] font-bold text-cyan-300">
-                                ⚡ {item.actions.length} action(s)
-                              </span>
+                            {!!item.actions?.length && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setOpenActionMenuItemId((openId) => openId === item.id ? null : item.id);
+                                }}
+                                className="absolute top-1 right-1 flex items-center gap-1 px-1.5 py-1 rounded-lg bg-cyan-950/95 border border-cyan-400/70 text-[10px] font-bold text-cyan-200 hover:bg-cyan-800 shadow-lg cursor-pointer"
+                                title={`Ver ações 3D de ${item.name}`}
+                                aria-label={`Ver ações 3D de ${item.name}`}
+                                aria-expanded={openActionMenuItemId === item.id}
+                              >
+                                <Activity className="w-3.5 h-3.5" />
+                                <span>{item.actions.length}</span>
+                              </button>
                             )}
                           </div>
 
@@ -1769,11 +1984,10 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                             </span>
                           </div>
 
-                          {/* Interactive Actions Execution Buttons if item has actions */}
-                          {item.actions && item.actions.length > 0 && (
+                          {openActionMenuItemId === item.id && !!item.actions?.length && (
                             <div className="mb-2 p-1.5 rounded-lg bg-cyan-950/50 border border-cyan-400/40 space-y-1">
                               <span className="text-[10px] text-cyan-300 font-bold block">
-                                ⚡ Actions ({item.actions.length}) - Clique para Executar:
+                                Ações 3D de {item.name}:
                               </span>
                               <div className="flex flex-col gap-1">
                                 {item.actions.map((act) => {
@@ -1788,6 +2002,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                                         e.stopPropagation();
                                         handleSelectItem(item);
                                         setActiveAction(act);
+                                        setIsActionPanelMinimized(false);
                                         showToast(`⚡ Executando Action "${act.name}" no modelo 3D!`);
                                       }}
                                       className={`w-full py-1 px-2 rounded text-[10px] font-bold flex items-center justify-between transition-all cursor-pointer shadow-sm ${
@@ -1797,7 +2012,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
                                       }`}
                                       title={`Executar action ${act.name}`}
                                     >
-                                      <span className="truncate">▶ {act.name}</span>
+                                      <span className="truncate">▶ Executar: {act.name}</span>
                                       <span className="text-[8px] font-mono px-1 rounded bg-black/40 text-cyan-300">
                                         {act.motion.curveTrajectory || 'Lin'}
                                       </span>
@@ -2135,6 +2350,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
             </div>
           )}
         </div>
+        )}
 
         {/* ========================================================
             CENTER COLUMN: 3D INTERACTIVE PEDESTAL & ACCESSORY GIZMO
@@ -2237,48 +2453,82 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
 
           {/* Action Execution Bar for Accessory or Inspected Object */}
           {activeItemActions.length > 0 && (
-            <div className="absolute top-18 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full bg-[#121319]/90 border border-cyan-400/60 backdrop-blur-md flex items-center gap-2 shadow-2xl animate-fade-in">
-              <span className="text-[10px] text-cyan-300 font-bold uppercase tracking-wider flex items-center gap-1">
-                <Activity className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Actions:</span>
-              </span>
+            <div className="absolute top-4 right-4 z-40 animate-fade-in">
+              {isActionPanelMinimized ? (
+                <button
+                  type="button"
+                  onClick={() => setIsActionPanelMinimized(false)}
+                  className="flex items-center gap-2 rounded-xl border border-cyan-400/70 bg-[#121319]/95 px-3 py-2 text-cyan-100 shadow-2xl backdrop-blur-md hover:bg-cyan-950"
+                  title="Mostrar ações do objeto"
+                  aria-label="Mostrar ações do objeto"
+                >
+                  <Activity className="h-4 w-4 text-cyan-300" />
+                  <span className="max-w-32 truncate text-[10px] font-bold">
+                    {activeAction?.name || 'Actions'}
+                  </span>
+                  <Maximize2 className="h-3.5 w-3.5" />
+                </button>
+              ) : (
+                <div className="w-64 max-w-[calc(100vw-2rem)] rounded-xl border border-cyan-400/70 bg-[#121319]/95 p-3 shadow-2xl backdrop-blur-md">
+                  <div className="mb-2 flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-cyan-200">
+                      <Activity className="h-4 w-4 flex-shrink-0 text-cyan-400" />
+                      <span className="truncate">
+                        {selectedItemToInspect?.name || activeSelectedAccessory?.name || activeStoreAvatar?.name || 'Ações do objeto'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsActionPanelMinimized(true)}
+                      className="flex-shrink-0 rounded p-1 text-cyan-200 hover:bg-cyan-900 hover:text-white"
+                      title="Minimizar painel sem parar a action"
+                      aria-label="Minimizar painel de actions"
+                    >
+                      <Minimize2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveAction(null);
-                  showToast('Animação pausada.');
-                }}
-                className={`px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer transition-colors ${
-                  !activeAction
-                    ? 'bg-cyan-400 text-black'
-                    : 'bg-black/50 text-zinc-400 hover:text-white'
-                }`}
-              >
-                ⏹ Parar
-              </button>
+                  <div className="flex flex-col gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveAction(null);
+                        showToast('Animação pausada.');
+                      }}
+                      className={`w-full rounded px-2.5 py-1.5 text-left text-[10px] font-bold transition-colors ${
+                        !activeAction
+                          ? 'bg-cyan-400 text-black'
+                          : 'bg-black/50 text-zinc-300 hover:bg-red-950 hover:text-white'
+                      }`}
+                    >
+                      ⏹ Parar animação
+                    </button>
 
-              {activeItemActions.map((act) => {
-                const isRunning = activeAction?.id === act.id;
-                return (
-                  <button
-                    key={act.id}
-                    type="button"
-                    onClick={() => {
-                      setActiveAction(act);
-                      showToast(`Executando Action "${act.name}" em tempo real!`);
-                    }}
-                    className={`px-3 py-1 rounded text-[10px] font-bold cursor-pointer transition-all flex items-center gap-1.5 ${
-                      isRunning
-                        ? 'bg-gradient-to-r from-cyan-400 to-teal-400 text-black shadow-md'
-                        : 'bg-black/50 hover:bg-cyan-950/60 text-cyan-200 border border-cyan-500/30'
-                    }`}
-                  >
-                    <span>⚡</span>
-                    <span>{act.name}</span>
-                  </button>
-                );
-              })}
+                    {activeItemActions.map((act) => {
+                      const isRunning = activeAction?.id === act.id;
+                      return (
+                        <button
+                          key={act.id}
+                          type="button"
+                          onClick={() => {
+                            setActiveAction(act);
+                            setIsActionPanelMinimized(false);
+                            showToast(`Executando Action "${act.name}" em tempo real!`);
+                          }}
+                          className={`flex w-full items-center gap-1.5 rounded px-2.5 py-1.5 text-left text-[10px] font-bold transition-all ${
+                            isRunning
+                              ? 'bg-gradient-to-r from-cyan-400 to-teal-400 text-black shadow-md'
+                              : 'border border-cyan-500/30 bg-black/50 text-cyan-200 hover:bg-cyan-950/60'
+                          }`}
+                        >
+                          <span>▶ Testar</span>
+                          <span className="truncate">{act.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -2415,6 +2665,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
         </div>
 
         {/* RIGHT COLUMN: POSES DO AVATAR */}
+        {!isPedestalFocusMode && (
         <div className="w-72 lg:w-80 border-l border-[#262833]/80 bg-[#0d0e12] p-6 flex flex-col overflow-hidden flex-shrink-0">
           <div className="flex items-center justify-between pb-4 border-b border-white/5">
             <div>
@@ -2635,10 +2886,11 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
             })}
           </div>
         </div>
+        )}
       </div>
 
       {/* INVENTÁRIO DE ACESSO DAS ROOMS (BARRA INFERIOR DE SLOTS / ATALHOS) */}
-      <RoomAccessBar
+      {!isPedestalFocusMode && <RoomAccessBar
         slots={roomAccessSlots}
         onUpdateSlots={handleUpdateRoomAccessSlots}
         onSlotClick={(slot) => {
@@ -2654,7 +2906,7 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
         activeAvatarId={selectedAvatarId}
         activePoseId={poses.find((p) => p.applied)?.id}
         onShowToast={showToast}
-      />
+      />}
 
       {/* CART DRAWER / MODAL */}
       {isCartOpen && (

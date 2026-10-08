@@ -12,6 +12,7 @@ import {
   SpotVisualConfig,
   PlacedObject,
   AccessoryTransform,
+  ObjectAction,
 } from '../types';
 import {
   createScarletSalonArchitecture,
@@ -32,6 +33,7 @@ interface LoungeCanvas3DProps {
   editorRoom?: RoomEditorState;
   showSpotArrows?: boolean;
   activeUserAvatar?: StoreAvatar | null;
+  activeAvatarAction?: ObjectAction | null;
   customAvatarObject?: PlacedObject | null;
   gizmoMode?: GizmoMode;
   onChangeTransform?: (newTransform: AvatarTransform) => void;
@@ -51,6 +53,7 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
   editorRoom,
   showSpotArrows = true,
   activeUserAvatar,
+  activeAvatarAction,
   customAvatarObject,
   gizmoMode = 'mover',
   onChangeTransform,
@@ -59,6 +62,11 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const playerGroupRef = useRef<THREE.Group | null>(null);
+  const appliedAvatarActionRef = useRef({
+    position: new THREE.Vector3(),
+    rotation: new THREE.Vector3(),
+    scale: 1,
+  });
   const remotePlayersGroupRef = useRef<THREE.Group | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -76,6 +84,9 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
 
   const transformRef = useRef<AvatarTransform>(transform);
   transformRef.current = transform;
+
+  const activeAvatarActionRef = useRef<ObjectAction | null>(activeAvatarAction || null);
+  activeAvatarActionRef.current = activeAvatarAction || null;
 
   const onChangeTransformRef = useRef(onChangeTransform);
   onChangeTransformRef.current = onChangeTransform;
@@ -715,6 +726,21 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
       animationFrameRef.current = requestAnimationFrame(animate);
       const time = performance.now() * 0.001;
 
+      const player = playerGroupRef.current;
+      const previousAction = appliedAvatarActionRef.current;
+      if (player) {
+        player.position.sub(previousAction.position);
+        player.rotation.x -= previousAction.rotation.x;
+        player.rotation.y -= previousAction.rotation.y;
+        player.rotation.z -= previousAction.rotation.z;
+        if (previousAction.scale !== 1) {
+          player.scale.divideScalar(previousAction.scale);
+        }
+        previousAction.position.set(0, 0, 0);
+        previousAction.rotation.set(0, 0, 0);
+        previousAction.scale = 1;
+      }
+
       // Smooth camera orbit positioning
       if (cameraRef.current) {
         const cam = cameraRef.current;
@@ -864,6 +890,57 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
               playerGroupRef.current.rotation.y = THREE.MathUtils.degToRad(totalAngleDeg);
             }
           }
+        }
+      }
+
+      const avatarAction = activeAvatarActionRef.current;
+      if (avatarAction?.motion && playerGroupRef.current && !isTransformDraggingRef.current) {
+        const cfg = avatarAction.motion;
+        const speed = cfg.speed || 1;
+        const phase = (time * speed * 2) % (Math.PI * 2);
+        const factor = cfg.loop ? (1 - Math.cos(phase)) / 2 : (time * speed) % 1;
+        const trajectory = cfg.curveTrajectory || 'linear';
+        let actionX = (cfg.deltaPosition?.[0] || 0) * factor;
+        let actionY = (cfg.deltaPosition?.[1] || 0) * factor;
+        let actionZ = (cfg.deltaPosition?.[2] || 0) * factor;
+
+        if (trajectory === 'arc') {
+          actionY += 4 * (cfg.curveHeight ?? 1.2) * factor * (1 - factor);
+        } else if (trajectory === 'circle_turn') {
+          const angle = THREE.MathUtils.degToRad((cfg.turnAngle ?? 360) * factor);
+          const radius = cfg.curveRadius ?? 1.2;
+          actionX = radius * Math.sin(angle) + (cfg.deltaPosition?.[0] || 0) * factor;
+          actionZ = radius * (1 - Math.cos(angle)) + (cfg.deltaPosition?.[2] || 0) * factor;
+        } else if (trajectory === 'spiral') {
+          const angle = THREE.MathUtils.degToRad((cfg.turnAngle ?? 360) * factor);
+          const radius = cfg.curveRadius ?? 0.8;
+          actionX = radius * (Math.cos(angle) - 1) + (cfg.deltaPosition?.[0] || 0) * factor;
+          actionZ = radius * Math.sin(angle) + (cfg.deltaPosition?.[2] || 0) * factor;
+          actionY += factor * 0.5;
+        } else if (trajectory === 'wave') {
+          actionY += Math.sin(factor * Math.PI * 4) * 0.25;
+        }
+
+        const avatar = playerGroupRef.current;
+        avatar.position.x += actionX;
+        avatar.position.y += actionY;
+        avatar.position.z += actionZ;
+        const rotationX = THREE.MathUtils.degToRad((cfg.deltaRotation?.[0] || 0) * factor);
+        const rotationY = THREE.MathUtils.degToRad(
+          (trajectory === 'circle_turn' ? cfg.turnAngle ?? 360 : cfg.deltaRotation?.[1] || 0) *
+            factor
+        );
+        const rotationZ = THREE.MathUtils.degToRad((cfg.deltaRotation?.[2] || 0) * factor);
+        avatar.rotation.x += rotationX;
+        avatar.rotation.y += rotationY;
+        avatar.rotation.z += rotationZ;
+        appliedAvatarActionRef.current.position.set(actionX, actionY, actionZ);
+        appliedAvatarActionRef.current.rotation.set(rotationX, rotationY, rotationZ);
+
+        if (cfg.scaleFactor !== undefined) {
+          const scaleFactor = 1 + (cfg.scaleFactor - 1) * factor;
+          avatar.scale.multiplyScalar(scaleFactor);
+          appliedAvatarActionRef.current.scale = scaleFactor;
         }
       }
 

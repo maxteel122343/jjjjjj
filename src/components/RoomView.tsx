@@ -57,12 +57,30 @@ export const RoomView: React.FC<RoomViewProps> = ({
   const [liveAvatar, setLiveAvatar] = useState<StoreAvatar | null>(() => {
     return activeUserAvatar || storeAvatars[0] || null;
   });
+  const [activeAvatarActionId, setActiveAvatarActionId] = useState<string | null>(null);
+
+  const handleToggleAvatarAction = (actionId: string) => {
+    const nextActionId = activeAvatarActionId === actionId ? null : actionId;
+    setActiveAvatarActionId(nextActionId);
+  };
 
   useEffect(() => {
     if (activeUserAvatar) {
       setLiveAvatar(activeUserAvatar);
     }
   }, [activeUserAvatar]);
+
+  useEffect(() => {
+    setActiveAvatarActionId(null);
+  }, [liveAvatar?.id]);
+
+  useEffect(() => {
+    if (!activeAvatarActionId) return;
+    const actionStillExists = liveAvatar?.actions?.some((action) => action.id === activeAvatarActionId);
+    if (!actionStillExists) {
+      setActiveAvatarActionId(null);
+    }
+  }, [liveAvatar, activeAvatarActionId]);
 
   const [remotePlayers, setRemotePlayers] = useState<any[]>([]);
   const roomChannelRef = React.useRef<any>(null);
@@ -447,6 +465,9 @@ export const RoomView: React.FC<RoomViewProps> = ({
           editorRoom={room.editorRoom}
           showSpotArrows={showSpotArrows}
           activeUserAvatar={liveAvatar}
+          activeAvatarAction={
+            liveAvatar?.actions?.find((action) => action.id === activeAvatarActionId) || null
+          }
           customAvatarObject={effectiveCustomAvatarObject}
           gizmoMode={gizmoMode}
           onChangeTransform={setTransform}
@@ -464,6 +485,9 @@ export const RoomView: React.FC<RoomViewProps> = ({
         activeUserAvatar={liveAvatar}
         user={user}
         remotePlayers={remotePlayers}
+        avatarActions={liveAvatar?.actions}
+        activeAvatarActionId={activeAvatarActionId}
+        onToggleAvatarAction={handleToggleAvatarAction}
       />
 
       {/* Instant HUD Toast Feedback */}

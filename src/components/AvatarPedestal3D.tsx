@@ -6,6 +6,17 @@ import { CustomizationItem, ObjectAction, AccessoryTransform } from '../types';
 import { getGlbFile, getAllGlbIds } from '../lib/storageIndexedDB';
 import { extractAssetUuid, resolveAssetDownloadUrl } from '../lib/assetSyncClient';
 
+const PEDESTAL_SURFACE_Y = 0.12;
+const PEDESTAL_OBJECT_CLEARANCE = 0.06;
+
+function alignObjectBottomToY(object: THREE.Object3D, targetY: number): void {
+  object.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(object);
+  if (!bounds.isEmpty() && bounds.min.y < targetY) {
+    object.position.y += targetY - bounds.min.y;
+  }
+}
+
 interface AvatarPedestal3DProps {
   currentPose: string; // 'Em pé' | 'Sentar' | 'Deitar' | 'Rindo' | 'Acenar' | 'Modelo Noir'
   equippedItems: CustomizationItem[];
@@ -466,7 +477,7 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
         avatarGroupRef.current.rotation.y = internalRotationRef.current;
         avatarGroupRef.current.position.set(
           fineAdjustments.panX,
-          0.12 + fineAdjustments.elevationY,
+          PEDESTAL_SURFACE_Y + PEDESTAL_OBJECT_CLEARANCE + fineAdjustments.elevationY,
           fineAdjustments.panY
         );
         const s = fineAdjustments.scale;
@@ -539,6 +550,36 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
               bt.scale[1] * scaleVal,
               bt.scale[2] * scaleVal
             );
+          }
+        } else {
+          const isolatedItem = isolatedGroupRef.current?.children[0];
+          const baseTransform = isolatedItem?.userData.baseTransform;
+          if (isolatedItem && baseTransform) {
+            isolatedItem.position.set(
+              baseTransform.position[0] + posX,
+              baseTransform.position[1] + posY,
+              baseTransform.position[2] + posZ
+            );
+            isolatedItem.rotation.set(
+              baseTransform.rotation[0] + rx,
+              baseTransform.rotation[1] + ry,
+              baseTransform.rotation[2] + rz
+            );
+            isolatedItem.scale.set(
+              baseTransform.scale[0] * scaleVal,
+              baseTransform.scale[1] * scaleVal,
+              baseTransform.scale[2] * scaleVal
+            );
+            alignObjectBottomToY(isolatedItem, PEDESTAL_SURFACE_Y + PEDESTAL_OBJECT_CLEARANCE);
+          } else if (avatarGroupRef.current) {
+            const avatarScale = fineAdjustments.scale * scaleVal;
+            avatarGroupRef.current.position.set(
+              fineAdjustments.panX + posX,
+              PEDESTAL_SURFACE_Y + PEDESTAL_OBJECT_CLEARANCE + fineAdjustments.elevationY + posY,
+              fineAdjustments.panY + posZ
+            );
+            avatarGroupRef.current.rotation.set(rx, internalRotationRef.current + ry, rz);
+            avatarGroupRef.current.scale.set(avatarScale, avatarScale, avatarScale);
           }
         }
       }
@@ -684,6 +725,12 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
 
       if (selectedItemToInspect.isMissingAsset || (!itemAssetUuid && !selectedItemToInspect.fileBlobUrl)) {
         const missingMesh = createMissingAssetMesh(selectedItemToInspect.name);
+        alignObjectBottomToY(missingMesh, PEDESTAL_SURFACE_Y + PEDESTAL_OBJECT_CLEARANCE);
+        missingMesh.userData.baseTransform = {
+          position: missingMesh.position.toArray(),
+          rotation: missingMesh.rotation.toArray(),
+          scale: missingMesh.scale.toArray(),
+        };
         isolatedGroup.add(missingMesh);
         syncGizmo();
         return;
@@ -705,7 +752,7 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
           const center = scaledBox.getCenter(new THREE.Vector3());
           m.position.x = -center.x;
           m.position.z = -center.z;
-          m.position.y = 0.12 - scaledBox.min.y;
+          m.position.y = PEDESTAL_SURFACE_Y + PEDESTAL_OBJECT_CLEARANCE - scaledBox.min.y;
 
           m.traverse((node: any) => {
             if ((node as THREE.Mesh).isMesh) {
@@ -714,12 +761,23 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
               node.frustumCulled = false;
             }
           });
+          m.userData.baseTransform = {
+            position: m.position.toArray(),
+            rotation: m.rotation.toArray(),
+            scale: m.scale.toArray(),
+          };
           isolatedGroup.add(m);
           syncGizmo();
         },
         () => {
           // Arquivo ausente ou erro no download: mostra marcador de arquivo ausente, sem simular objeto falso
           const missingMesh = createMissingAssetMesh(selectedItemToInspect.name);
+          alignObjectBottomToY(missingMesh, PEDESTAL_SURFACE_Y + PEDESTAL_OBJECT_CLEARANCE);
+          missingMesh.userData.baseTransform = {
+            position: missingMesh.position.toArray(),
+            rotation: missingMesh.rotation.toArray(),
+            scale: missingMesh.scale.toArray(),
+          };
           isolatedGroup.add(missingMesh);
           syncGizmo();
         },
@@ -857,7 +915,7 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
           const center = scaledBox.getCenter(new THREE.Vector3());
           customModel.position.x = -center.x;
           customModel.position.z = -center.z;
-          customModel.position.y = 0.12 - scaledBox.min.y;
+          customModel.position.y = PEDESTAL_SURFACE_Y - scaledBox.min.y;
 
           // Apply posture adjustments according to currentPose
           const poseLower = (currentPose || '').toLowerCase();
@@ -877,6 +935,8 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
             customModel.rotation.y = 0.25;
             customModel.rotation.z = 0.04;
           }
+
+          alignObjectBottomToY(customModel, 0);
 
           customModel.traverse((node: any) => {
             if ((node as THREE.Mesh).isMesh) {
@@ -902,6 +962,7 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
 
     // Default base procedural avatar (apenas para o manequim inicial do sistema)
     const baseModel = buildBaseProceduralAvatar(currentPose, equippedItems);
+    alignObjectBottomToY(baseModel, 0);
     avatarGroup.add(baseModel);
     attachAccessories(avatarGroup);
   }, [

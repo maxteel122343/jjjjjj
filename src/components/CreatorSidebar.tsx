@@ -177,6 +177,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
 
   // Inventory Selection & Batch Deletion States
   const [selectedInventoryIds, setSelectedInventoryIds] = useState<string[]>([]);
+  const [expandedInventoryActionsId, setExpandedInventoryActionsId] = useState<string | null>(null);
   const [showClearAllModal, setShowClearAllModal] = useState<boolean>(false);
   const [showDeleteSelectedModal, setShowDeleteSelectedModal] = useState<boolean>(false);
 
@@ -2488,8 +2489,70 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                     <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border border-[#d4af37]/40 text-[#d4af37] inline-block mt-0.5">
                       {item.type}
                     </span>
+                    {!!item.actions?.length && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExpandedInventoryActionsId((currentId) =>
+                            currentId === item.id ? null : item.id
+                          );
+                        }}
+                        className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-cyan-400/50 bg-cyan-950/60 text-[9px] font-bold text-cyan-200 hover:bg-cyan-900 cursor-pointer"
+                        title={`Ver ${item.actions.length} action(s) deste item`}
+                        aria-expanded={expandedInventoryActionsId === item.id}
+                      >
+                        <Activity className="w-3 h-3" />
+                        {item.actions.length} actions
+                      </button>
+                    )}
                   </div>
                 </div>
+
+                {expandedInventoryActionsId === item.id && !!item.actions?.length && (
+                  <div className="space-y-1 rounded-md border border-cyan-400/30 bg-cyan-950/30 p-1.5">
+                    {item.actions.map((action) => {
+                      const matchingObjects = placedObjects.filter(
+                        (object) => object.assetId === item.id || object.assetId === item.assetId
+                      );
+                      const targetObject =
+                        matchingObjects.find((object) => object.id === selectedObjectId) ||
+                        matchingObjects[0];
+                      const isTesting =
+                        targetObject?.id === testingObjectAction?.objectId &&
+                        action.id === testingObjectAction?.actionId;
+
+                      return (
+                        <div
+                          key={action.id}
+                          className="flex items-center justify-between gap-2 text-[10px]"
+                        >
+                          <span className="truncate text-cyan-100">{action.name}</span>
+                          {targetObject && onToggleTestObjectAction ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectObjectId?.(targetObject.id);
+                                onToggleTestObjectAction(
+                                  targetObject.id,
+                                  isTesting ? null : action.id
+                                );
+                              }}
+                              className="flex-shrink-0 rounded bg-cyan-700 px-2 py-0.5 font-bold text-white hover:bg-cyan-600 cursor-pointer"
+                            >
+                              {isTesting ? 'Parar' : 'Testar'}
+                            </button>
+                          ) : (
+                            <span className="flex-shrink-0 text-zinc-400">
+                              Insira na cena para testar
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {/* Actions: Inserir na cena & Publicar na Loja */}
                 <div className="flex items-center gap-1.5 w-full pt-1">
@@ -2654,10 +2717,6 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>Sim, Limpar Tudo</span>
                   </button>
-                </div>
-              </div>
-            </div>
-          )}
                 </div>
               </div>
             </div>

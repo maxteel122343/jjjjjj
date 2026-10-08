@@ -347,6 +347,7 @@ export interface StoreAvatar {
   fileBlobUrl?: string;
   originalItemId?: string;
   isMissingAsset?: boolean;
+  actions?: ObjectAction[];
 }
 
 export interface AvatarPoseConfig {
