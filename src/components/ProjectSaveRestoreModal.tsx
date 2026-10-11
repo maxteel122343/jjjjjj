@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X,
   Download,
@@ -35,6 +35,7 @@ import {
 
 interface ProjectSaveRestoreModalProps {
   isOpen: boolean;
+  initialTab?: 'export' | 'import';
   onClose: () => void;
   rooms: RoomEditorState[];
   inventory: InventoryItem[];
@@ -57,6 +58,7 @@ interface ProjectSaveRestoreModalProps {
 
 export const ProjectSaveRestoreModal: React.FC<ProjectSaveRestoreModalProps> = ({
   isOpen,
+  initialTab = 'export',
   onClose,
   rooms,
   inventory,
@@ -80,6 +82,10 @@ export const ProjectSaveRestoreModal: React.FC<ProjectSaveRestoreModalProps> = (
   const [importedPackage, setImportedPackage] = useState<ProjectExportPackage | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) setActiveTab(initialTab);
+  }, [initialTab, isOpen]);
 
   if (!isOpen) return null;
 

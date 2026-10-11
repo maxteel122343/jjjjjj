@@ -19,6 +19,7 @@ import {
   createLoftArchitecture,
 } from '../lib/roomArchitectures';
 import { extractAssetUuid, resolveAssetDownloadUrl } from '../lib/assetSyncClient';
+import { getActionMotionFactor } from '../lib/actionMotion';
 import { createMissingAssetMesh, createMissingAvatarPlaceholder } from './AvatarPedestal3D';
 
 interface LoungeCanvas3DProps {
@@ -87,6 +88,10 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
 
   const activeAvatarActionRef = useRef<ObjectAction | null>(activeAvatarAction || null);
   activeAvatarActionRef.current = activeAvatarAction || null;
+  const activeAvatarActionStartRef = useRef<{ actionId: string | null; startedAt: number }>({
+    actionId: null,
+    startedAt: 0,
+  });
 
   const onChangeTransformRef = useRef(onChangeTransform);
   onChangeTransformRef.current = onChangeTransform;
@@ -896,9 +901,14 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
       const avatarAction = activeAvatarActionRef.current;
       if (avatarAction?.motion && playerGroupRef.current && !isTransformDraggingRef.current) {
         const cfg = avatarAction.motion;
-        const speed = cfg.speed || 1;
-        const phase = (time * speed * 2) % (Math.PI * 2);
-        const factor = cfg.loop ? (1 - Math.cos(phase)) / 2 : (time * speed) % 1;
+        if (activeAvatarActionStartRef.current.actionId !== avatarAction.id) {
+          activeAvatarActionStartRef.current = { actionId: avatarAction.id, startedAt: time };
+        }
+        const elapsed = time - activeAvatarActionStartRef.current.startedAt;
+        const factor =
+          cfg.durationSeconds !== undefined && elapsed >= cfg.durationSeconds
+            ? 0
+            : getActionMotionFactor(cfg, elapsed);
         const trajectory = cfg.curveTrajectory || 'linear';
         let actionX = (cfg.deltaPosition?.[0] || 0) * factor;
         let actionY = (cfg.deltaPosition?.[1] || 0) * factor;
@@ -942,6 +952,8 @@ export const LoungeCanvas3D: React.FC<LoungeCanvas3DProps> = ({
           avatar.scale.multiplyScalar(scaleFactor);
           appliedAvatarActionRef.current.scale = scaleFactor;
         }
+      } else if (!avatarAction) {
+        activeAvatarActionStartRef.current.actionId = null;
       }
 
       // Move any parent placedObjects in editorRoom that have motion configured

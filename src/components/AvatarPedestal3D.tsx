@@ -5,6 +5,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { CustomizationItem, ObjectAction, AccessoryTransform } from '../types';
 import { getGlbFile, getAllGlbIds } from '../lib/storageIndexedDB';
 import { extractAssetUuid, resolveAssetDownloadUrl } from '../lib/assetSyncClient';
+import { getActionMotionFactor } from '../lib/actionMotion';
 
 const PEDESTAL_SURFACE_Y = 0.12;
 const PEDESTAL_OBJECT_CLEARANCE = 0.06;
@@ -47,6 +48,7 @@ interface AvatarPedestal3DProps {
   ) => void;
   gizmoMode?: 'mover' | 'rodar' | 'escalar';
   activeAction?: ObjectAction | null;
+  onActionComplete?: (actionId: string) => void;
   isPositionLocked?: boolean;
 }
 
@@ -242,6 +244,7 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
   onUpdateAccessoryTransform,
   gizmoMode = 'mover',
   activeAction = null,
+  onActionComplete,
   isPositionLocked = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -271,6 +274,13 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
 
   const activeActionRef = useRef(activeAction);
   activeActionRef.current = activeAction;
+  const onActionCompleteRef = useRef(onActionComplete);
+  onActionCompleteRef.current = onActionComplete;
+  const actionStartRef = useRef<{ actionId: string | null; startedAt: number; completed: boolean }>({
+    actionId: null,
+    startedAt: 0,
+    completed: false,
+  });
 
   useEffect(() => {
     internalRotationRef.current = fineAdjustments.rotationY;
@@ -493,9 +503,19 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
       const currAction = activeActionRef.current;
       if (currAction && currAction.motion && !isTransformDraggingRef.current) {
         const cfg = currAction.motion;
-        const spd = cfg.speed || 1.0;
-        const phase = (time * spd * 2.0) % (Math.PI * 2);
-        const factor = cfg.loop ? (1 - Math.cos(phase)) / 2 : (time * spd) % 1.0;
+        if (actionStartRef.current.actionId !== currAction.id) {
+          actionStartRef.current = { actionId: currAction.id, startedAt: time, completed: false };
+        }
+        const elapsed = time - actionStartRef.current.startedAt;
+        const durationComplete =
+          cfg.durationSeconds !== undefined && elapsed >= cfg.durationSeconds;
+        const factor = durationComplete
+          ? 0
+          : getActionMotionFactor(cfg, elapsed);
+        if (durationComplete && !actionStartRef.current.completed) {
+          actionStartRef.current.completed = true;
+          onActionCompleteRef.current?.(currAction.id);
+        }
 
         let posX = (cfg.deltaPosition?.[0] || 0) * factor;
         let posY = (cfg.deltaPosition?.[1] || 0) * factor;
@@ -582,6 +602,8 @@ export const AvatarPedestal3D: React.FC<AvatarPedestal3DProps> = ({
             avatarGroupRef.current.scale.set(avatarScale, avatarScale, avatarScale);
           }
         }
+      } else if (!currAction) {
+        actionStartRef.current.actionId = null;
       }
 
       renderer.render(scene, camera);

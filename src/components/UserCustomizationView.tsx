@@ -2552,6 +2552,9 @@ export const UserCustomizationView: React.FC<UserCustomizationViewProps> = ({
               onUpdateAccessoryTransform={handleUpdateAccessoryTransform}
               gizmoMode={gizmoMode}
               activeAction={activeAction}
+              onActionComplete={(actionId) => {
+                setActiveAction((current) => current?.id === actionId ? null : current);
+              }}
               isPositionLocked={isPositionLocked}
             />
           </div>

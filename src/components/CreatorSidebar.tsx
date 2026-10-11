@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   MapPin,
   FolderArchive,
@@ -27,6 +27,7 @@ import {
   Compass,
   Sliders,
   Download,
+  Save,
   Database,
   AlertTriangle,
   Layers,
@@ -34,6 +35,7 @@ import {
   Zap,
 } from 'lucide-react';
 import {
+  ActionSpeedKeyframe,
   InventoryItem,
   PlacedObject,
   SpotItem,
@@ -41,21 +43,39 @@ import {
   SpotMotionConfig,
   ObjectAction,
   MotionCurveTrajectory,
+  GizmoEditMode,
 } from '../types';
+import { ActionSpeedProfileFields } from './ActionSpeedProfileFields';
+
+const objectAccentPalette = [
+  { border: 'border-l-cyan-400', badge: 'bg-cyan-400/15 text-cyan-200 border-cyan-300/40' },
+  { border: 'border-l-violet-400', badge: 'bg-violet-400/15 text-violet-200 border-violet-300/40' },
+  { border: 'border-l-emerald-400', badge: 'bg-emerald-400/15 text-emerald-200 border-emerald-300/40' },
+  { border: 'border-l-orange-400', badge: 'bg-orange-400/15 text-orange-200 border-orange-300/40' },
+  { border: 'border-l-sky-400', badge: 'bg-sky-400/15 text-sky-200 border-sky-300/40' },
+  { border: 'border-l-pink-400', badge: 'bg-pink-400/15 text-pink-200 border-pink-300/40' },
+];
 
 interface CreatorSidebarProps {
   inventory: InventoryItem[];
   spots: SpotItem[];
   placedObjects?: PlacedObject[];
   selectedObjectId?: string | null;
+  activeGizmoMode?: GizmoEditMode;
   onSelectObjectId?: (id: string | null) => void;
   onRemoveObject?: (id: string) => void;
   onUpdateObjectType?: (id: string, type: 'cenario' | 'movel' | 'objeto' | 'avatar' | 'acessorio') => void;
   onUpdateObjectActions?: (objectId: string, actions: ObjectAction[]) => void;
   onToggleTestObjectAction?: (objectId: string, actionId: string | null) => void;
+  onPreviewObjectAction?: (objectId: string, motion: SpotMotionConfig | null) => void;
   onPauseTestObjectAction?: (objectId: string, actionId: string) => void;
   onResumeTestObjectAction?: (objectId: string, actionId: string) => void;
-  testingObjectAction?: { objectId: string; actionId: string; isPaused?: boolean } | null;
+  testingObjectAction?: {
+    objectId: string;
+    actionId: string;
+    isPaused?: boolean;
+    motion?: SpotMotionConfig;
+  } | null;
   onOpenPublicationsModal?: () => void;
   publishedCount?: number;
   onOpenUploadModal: () => void;
@@ -81,7 +101,7 @@ interface CreatorSidebarProps {
   onDeleteInventoryItem?: (itemId: string) => void;
   onDeleteMultipleInventoryItems?: (itemIds: string[]) => void;
   onClearAllInventory?: () => void;
-  onOpenProjectModal?: () => void;
+  onOpenProjectModal?: (tab?: 'export' | 'import') => void;
   onAddSpotAtObject?: (objectId: string) => void;
   onStartSurfaceSnap?: (objectId?: string | null) => void;
   onCancelSurfaceSnap?: () => void;
@@ -112,11 +132,13 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
   spots,
   placedObjects = [],
   selectedObjectId = null,
+  activeGizmoMode = 'mover',
   onSelectObjectId,
   onRemoveObject,
   onUpdateObjectType,
   onUpdateObjectActions,
   onToggleTestObjectAction,
+  onPreviewObjectAction,
   onPauseTestObjectAction,
   onResumeTestObjectAction,
   testingObjectAction = null,
@@ -172,6 +194,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'spots' | 'objects' | 'actions' | 'inventory'>('spots');
   const [isAddingSpot, setIsAddingSpot] = useState(false);
+  const [expandedSpotConfigId, setExpandedSpotConfigId] = useState<string | null>(null);
   const [newSpotType, setNewSpotType] = useState<SpotType>('sentar');
   const [newSpotName, setNewSpotName] = useState('');
 
@@ -194,6 +217,56 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
   const [actionCurveHeight, setActionCurveHeight] = useState(1.5);
   const [actionSpeed, setActionSpeed] = useState(1.0);
   const [actionLoop, setActionLoop] = useState(true);
+  const [actionDuration, setActionDuration] = useState('');
+  const [actionSpeedProfile, setActionSpeedProfile] = useState<ActionSpeedKeyframe[]>([]);
+
+  const buildDraftActionMotion = (): SpotMotionConfig => ({
+    enabled: true,
+    deltaPosition: actionDeltaPos,
+    deltaRotation: actionDeltaRot,
+    turnAngle: actionTurnAngle,
+    curveTrajectory: actionTrajInput,
+    curveRadius: actionCurveRadius,
+    curveHeight: actionCurveHeight,
+    speed: actionSpeed,
+    ...(actionSpeedProfile.length ? { speedProfile: actionSpeedProfile } : {}),
+    loop: actionLoop,
+    ...(actionDuration.trim() && Number.isFinite(Number(actionDuration)) && Number(actionDuration) > 0
+      ? { durationSeconds: Number(actionDuration) }
+      : {}),
+    target: 'parent_object',
+  });
+
+  const draftPreviewObjectId = testingObjectAction?.actionId === '__draft__'
+    ? testingObjectAction.objectId
+    : null;
+  const firstPlacedObjectId = placedObjects[0]?.id;
+
+  useEffect(() => {
+    if (!draftPreviewObjectId || !onPreviewObjectAction) return;
+    const currentTargetId = actionTargetId || selectedObjectId || firstPlacedObjectId;
+    if (draftPreviewObjectId !== currentTargetId) {
+      onPreviewObjectAction(draftPreviewObjectId, null);
+      return;
+    }
+    onPreviewObjectAction(draftPreviewObjectId, buildDraftActionMotion());
+  }, [
+    actionDeltaPos,
+    actionDeltaRot,
+    actionDuration,
+    actionLoop,
+    actionSpeed,
+    actionSpeedProfile,
+    actionTargetId,
+    actionTrajInput,
+    actionTurnAngle,
+    actionCurveHeight,
+    actionCurveRadius,
+    draftPreviewObjectId,
+    onPreviewObjectAction,
+    firstPlacedObjectId,
+    selectedObjectId,
+  ]);
 
   // Inline rename state
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -285,7 +358,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
   }
 
   return (
-    <aside className="relative w-64 md:w-72 bg-[#121317]/95 border-r border-[#d4af37]/30 flex flex-col h-full text-[#e8d5b5] select-none z-20 font-sans shadow-lg">
+    <aside className="relative w-60 md:w-60 xl:w-64 shrink-0 bg-[#10151e] border-r border-white/10 flex flex-col h-full text-[#e8d5b5] select-none z-20 font-sans shadow-lg">
       {/* Minimize Button on edge (indicated by user arrow in Image 1) */}
       {onToggleCollapse && (
         <button
@@ -299,60 +372,60 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
       )}
 
       {/* Top Tab Bar: [📍 SPOTS] | [🪑 OBJETOS (n)] | [⚡ ACTIONS] | [📦 ITENS (n)] */}
-      <div className="grid grid-cols-4 border-b border-[#d4af37]/30 bg-[#0e0f13]">
+      <div className="flex flex-col gap-1 border-b border-white/10 bg-[#0e0f13] px-2 py-2">
         <button
           type="button"
           onClick={() => setActiveTab('spots')}
-          className={`py-2.5 text-[10px] font-semibold uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer border-b-2 ${
+          className={`h-9 w-full rounded-md px-3 text-xs font-medium flex items-center justify-start gap-2 transition-all cursor-pointer border-l-2 ${
             activeTab === 'spots'
-              ? 'border-[#d4af37] text-[#ffd700] bg-[#14151a]'
-              : 'border-transparent text-[#d4af37]/60 hover:text-[#d4af37]'
+              ? 'border-[#ffd700] text-[#ffd700] bg-[#d4af37]/10'
+              : 'border-transparent text-[#cbd5e1]/75 hover:text-white hover:bg-white/5'
           }`}
           title="Spots de avatar"
         >
-          <MapPin className="w-3 h-3 flex-shrink-0" />
+          <MapPin className="w-4 h-4 flex-shrink-0" />
           <span>Spots</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveTab('objects')}
-          className={`py-2.5 text-[10px] font-semibold uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer border-b-2 ${
+          className={`h-9 w-full rounded-md px-3 text-xs font-medium flex items-center justify-start gap-2 transition-all cursor-pointer border-l-2 ${
             activeTab === 'objects'
-              ? 'border-[#d4af37] text-[#ffd700] bg-[#14151a]'
-              : 'border-transparent text-[#d4af37]/60 hover:text-[#d4af37]'
+              ? 'border-[#ffd700] text-[#ffd700] bg-[#d4af37]/10'
+              : 'border-transparent text-[#cbd5e1]/75 hover:text-white hover:bg-white/5'
           }`}
           title="Objetos e móveis na sala"
         >
-          <Box className="w-3 h-3 flex-shrink-0" />
-          <span>Objs ({placedObjects.length})</span>
+          <Box className="w-4 h-4 flex-shrink-0" />
+          <span>Objetos ({placedObjects.length})</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveTab('actions')}
-          className={`py-2.5 text-[10px] font-semibold uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer border-b-2 ${
+          className={`h-9 w-full rounded-md px-3 text-xs font-medium flex items-center justify-start gap-2 transition-all cursor-pointer border-l-2 ${
             activeTab === 'actions'
               ? 'border-cyan-400 text-cyan-300 bg-cyan-950/30'
-              : 'border-transparent text-cyan-400/60 hover:text-cyan-300'
+              : 'border-transparent text-cyan-400/70 hover:text-cyan-300 hover:bg-cyan-950/20'
           }`}
           title="Criar, editar e testar actions de qualquer objeto"
         >
-          <Activity className="w-3 h-3 flex-shrink-0 text-cyan-400" />
+          <Activity className="w-4 h-4 flex-shrink-0 text-cyan-400" />
           <span>Actions</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveTab('inventory')}
-          className={`py-2.5 text-[10px] font-semibold uppercase tracking-wider flex items-center justify-center gap-1 transition-all cursor-pointer border-b-2 ${
+          className={`h-9 w-full rounded-md px-3 text-xs font-medium flex items-center justify-start gap-2 transition-all cursor-pointer border-l-2 ${
             activeTab === 'inventory'
-              ? 'border-[#d4af37] text-[#ffd700] bg-[#14151a]'
-              : 'border-transparent text-[#d4af37]/60 hover:text-[#d4af37]'
+              ? 'border-[#ffd700] text-[#ffd700] bg-[#d4af37]/10'
+              : 'border-transparent text-[#cbd5e1]/75 hover:text-white hover:bg-white/5'
           }`}
           title="Arquivos e inventário 3D"
         >
-          <FolderArchive className="w-3 h-3 flex-shrink-0" />
+          <FolderArchive className="w-4 h-4 flex-shrink-0" />
           <span>Itens</span>
         </button>
       </div>
@@ -457,10 +530,10 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                 <div
                   key={spot.id}
                   onClick={() => onSelectSpot(spot)}
-                  className={`group flex flex-col gap-2 p-2.5 rounded-lg border transition-all cursor-pointer ${
+                  className={`group flex flex-col gap-2 p-2.5 rounded-lg border-l-[3px] transition-all cursor-pointer ${
                     isSelected
-                      ? 'border-[#d4af37] bg-[#d4af37]/15 text-[#ffd700] shadow-[0_0_12px_rgba(212,175,55,0.15)] ring-1 ring-[#d4af37]'
-                      : 'border-[#d4af37]/25 hover:border-[#d4af37]/60 bg-black/40 text-[#e8d5b5]/85'
+                      ? 'border-[#d4af37] border-l-[#ffd700] bg-[#d4af37]/15 text-[#ffd700] shadow-[0_0_12px_rgba(212,175,55,0.15)] ring-1 ring-[#d4af37]'
+                      : 'border border-l-transparent border-white/10 hover:border-[#d4af37]/50 bg-black/30 text-[#e8d5b5]/85'
                   }`}
                 >
                   <div className="flex items-center justify-between">
@@ -477,6 +550,11 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                       <div className="min-w-0">
                         <span className="text-xs font-semibold truncate block">{spot.name}</span>
                         <div className="flex items-center gap-1.5 flex-wrap">
+                          {isSelected && (
+                            <span className="text-[9px] leading-4 px-1.5 rounded bg-[#ffd700] text-[#11151d] font-bold uppercase tracking-wide">
+                              Selecionado
+                            </span>
+                          )}
                           {spot.parentObjectId && (
                             <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 font-semibold flex items-center gap-0.5">
                               <Link className="w-2.5 h-2.5" />
@@ -513,6 +591,24 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
 
                   {/* Expanded Config when Spot is Selected */}
                   {isSelected && (
+                    <div className="mt-1 flex items-center justify-between gap-2">
+                      <p className="text-[10px] text-[#d4af37]/80">
+                        Controles do spot disponíveis no painel junto à cena 3D.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExpandedSpotConfigId((current) => current === spot.id ? null : spot.id);
+                        }}
+                        className="flex-shrink-0 text-[10px] text-zinc-400 hover:text-[#ffd700] underline underline-offset-2 cursor-pointer"
+                      >
+                        {expandedSpotConfigId === spot.id ? 'Ocultar avançado' : 'Avançado'}
+                      </button>
+                    </div>
+                  )}
+
+                  {isSelected && expandedSpotConfigId === spot.id && (
                     <div
                       className="mt-2 pt-2 border-t border-[#d4af37]/30 space-y-2.5 text-xs text-[#e8d5b5]"
                       onClick={(e) => e.stopPropagation()}
@@ -545,11 +641,11 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                             </button>
                           )}
                         </div>
-                      ) : (
+                      ) : activeGizmoMode !== 'mover' ? (
                         <div className="text-[10px] text-zinc-400 font-mono">
                           Mundo: X: {spot.position[0]}m · Y: {spot.position[1]}m · Z: {spot.position[2]}m
                         </div>
-                      )}
+                      ) : null}
 
                       {/* 1b. Orientação do Spot (Rotação Horizontal e Inclinação Vertical) */}
                       <div className="p-2.5 rounded-lg bg-black/60 border border-[#d4af37]/30 space-y-2">
@@ -835,7 +931,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                                   <label className="text-[9px] text-cyan-300 block">Raio da Volta (m)</label>
                                   <input
                                     type="number"
-                                    step="0.5"
+                                    step="0.01"
                                     min="0.5"
                                     value={spot.motion.curveRadius !== undefined ? spot.motion.curveRadius : 2.0}
                                     onChange={(e) =>
@@ -856,7 +952,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                                 <label className="text-[9px] text-emerald-300 block">Altura da Curva em Arco (m)</label>
                                 <input
                                   type="number"
-                                  step="0.5"
+                                  step="0.01"
                                   value={spot.motion.curveHeight !== undefined ? spot.motion.curveHeight : 2.0}
                                   onChange={(e) =>
                                     onUpdateSpotMotion?.(spot.id, {
@@ -881,7 +977,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                                   </label>
                                   <input
                                     type="number"
-                                    step="0.5"
+                                    step="0.01"
                                     value={spot.motion.deltaPosition[2]}
                                     onChange={(e) => {
                                       const val = parseFloat(e.target.value) || 0;
@@ -1232,9 +1328,9 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
       {activeTab === 'objects' && (
         <div className="flex-1 flex flex-col justify-between overflow-hidden p-3.5">
           <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-            <div className="flex items-center justify-between pb-1 text-xs text-[#d4af37]/80">
+            <div className="flex items-center justify-between pb-1 text-sm text-[#d4af37]/90">
               <span className="font-semibold text-[#d4af37]">Objetos na cena</span>
-              <span className="text-[11px] font-mono">
+              <span className="text-xs font-mono">
                 {placedObjects.length + (sceneAssetBlobUrl ? 1 : 0)} itens
               </span>
             </div>
@@ -1244,7 +1340,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
               <div className="p-2.5 rounded-lg border-2 border-amber-400 bg-amber-950/50 text-amber-200 text-xs flex items-center justify-between gap-2 shadow-md animate-pulse">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <Crosshair className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                  <span className="truncate text-[11px] font-semibold">
+                  <span className="truncate text-xs font-semibold">
                     Clique na superfície 3D do objeto para fixar o spot!
                   </span>
                 </div>
@@ -1252,7 +1348,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                   <button
                     type="button"
                     onClick={onCancelSurfaceSnap}
-                    className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-bold border border-zinc-600 cursor-pointer"
+                    className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-bold border border-zinc-600 cursor-pointer"
                   >
                     Sair
                   </button>
@@ -1288,14 +1384,14 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-bold text-[#ffd700] truncate">
+                          <span className="text-sm font-bold text-[#ffd700] truncate">
                             {sceneAssetName || scenarioObj?.name || 'Cenário 3D da Sala'}
                           </span>
-                          <span className="text-[9px] px-1 py-0.2 rounded bg-[#ffd700] text-black font-bold uppercase">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#ffd700] text-black font-bold uppercase">
                             Cenário
                           </span>
                         </div>
-                        <span className="text-[10px] text-[#e8d5b5]/70 block font-mono">
+                        <span className="text-xs text-[#e8d5b5]/80 block font-mono">
                           {isScenarioSelected
                             ? '✓ Selecionado (Gizmo Ativo na Sala)'
                             : 'Clique para selecionar com Gizmo (Teto ~2.8m)'}
@@ -1321,10 +1417,10 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
             })()}
 
             {placedObjects.length === 0 && !sceneAssetBlobUrl ? (
-              <div className="p-4 rounded-lg border border-dashed border-[#d4af37]/30 bg-black/40 text-center text-xs text-[#e8d5b5]/60 mt-4">
+              <div className="p-4 rounded-lg border border-dashed border-[#d4af37]/30 bg-black/40 text-center text-sm text-[#e8d5b5]/70 mt-4">
                 <Box className="w-8 h-8 text-[#d4af37]/40 mx-auto mb-2" />
                 <p>Nenhum objeto na sala.</p>
-                <p className="text-[10px] text-[#d4af37]/60 mt-1">
+                <p className="text-xs text-[#d4af37]/75 mt-1 leading-relaxed">
                   Vá na aba "Itens" ou envie um arquivo GLB para inserir móveis.
                 </p>
               </div>
@@ -1334,10 +1430,11 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                   (obj) =>
                     !(sceneAssetBlobUrl && (obj.type === 'cenario' || obj.fileBlobUrl === sceneAssetBlobUrl))
                 )
-                .map((obj) => {
+                .map((obj, objectIndex) => {
                 const isSelected = selectedObjectId === obj.id;
                 const isAvatarType = obj.type === 'avatar' || obj.isAvatar;
                 const isCustomAvatar = customAvatarObjectId === obj.id;
+                const objectAccent = objectAccentPalette[objectIndex % objectAccentPalette.length];
 
                 const handleObjectClick = () => {
                   onSelectObjectId?.(obj.id);
@@ -1351,7 +1448,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                   <div
                     key={obj.id}
                     onClick={handleObjectClick}
-                    className={`group flex flex-col gap-2 p-2.5 rounded-lg border transition-all cursor-pointer ${
+                    className={`group grid grid-cols-[minmax(0,1fr)_auto] gap-x-1.5 gap-y-1 p-2 rounded-lg border border-l-4 leading-4 ${objectAccent.border} transition-all cursor-pointer ${
                       isSelected
                         ? 'border-[#d4af37] bg-[#d4af37]/15 text-[#ffd700] shadow-[0_0_12px_rgba(212,175,55,0.2)]'
                         : isCustomAvatar
@@ -1361,23 +1458,8 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                         : 'border-[#d4af37]/25 hover:border-[#d4af37]/60 bg-black/40 text-[#e8d5b5]/85'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="flex flex-col items-center gap-1 flex-shrink-0">
-                          {isAvatarType && (
-                            <input
-                              type="checkbox"
-                              checked={isCustomAvatar}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={() => onSetCustomAvatarObjectId?.(isCustomAvatar ? null : obj.id)}
-                              className="w-3.5 h-3.5 accent-[#ffd700] rounded cursor-pointer transition-transform hover:scale-110"
-                              title={
-                                isCustomAvatar
-                                  ? 'Avatar selecionado para teste (clique para desmarcar)'
-                                  : 'Marcar este avatar para teste (desmarcará o avatar anterior)'
-                              }
-                            />
-                          )}
+                    <div className="flex min-w-0 items-center gap-2">
+                        <div className="flex flex-shrink-0 flex-col items-center">
                           <div
                             className={`w-7 h-7 rounded border flex items-center justify-center flex-shrink-0 ${
                               isAvatarType
@@ -1431,8 +1513,11 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                               </button>
                             </div>
                           ) : (
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-semibold truncate block max-w-[140px]">
+                            <div className="flex min-w-0 items-center gap-1">
+                              <span className={`shrink-0 rounded border px-1 py-0.5 text-[9px] font-bold font-mono ${objectAccent.badge}`}>
+                                {String(objectIndex + 1).padStart(2, '0')}
+                              </span>
+                              <span className="min-w-0 flex-1 text-xs font-semibold leading-4 truncate">
                                 {obj.name}
                               </span>
                               {onRenamePlacedObject && (
@@ -1443,27 +1528,38 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                                     setEditingObjectId(obj.id);
                                     setEditingObjectName(obj.name);
                                   }}
-                                  className="p-0.5 rounded text-[#d4af37]/50 hover:text-[#ffd700] hover:bg-[#d4af37]/20 transition-colors cursor-pointer"
+                                  className="shrink-0 p-0.5 rounded text-[#d4af37]/70 hover:text-[#ffd700] hover:bg-[#d4af37]/20 transition-colors cursor-pointer"
                                   title="Renomear este objeto na cena"
                                 >
                                   <Pencil className="w-3 h-3" />
                                 </button>
                               )}
-                              {isCustomAvatar && (
-                                <span className="text-[9px] font-bold bg-[#ffd700] text-black px-1.5 py-0.2 rounded shadow-sm animate-pulse">
-                                  ⭐ Ativo
-                                </span>
-                              )}
                             </div>
                           )}
-                          <span className="text-[10px] font-mono text-[#d4af37]/75">
-                            X: {obj.position[0].toFixed(2)}m · Z: {obj.position[2].toFixed(2)}m
-                          </span>
+                          {activeGizmoMode !== 'mover' && (
+                            <span className="block truncate text-[10px] font-mono leading-3 text-[#d4af37]/85">
+                              X: {obj.position[0].toFixed(2)}m · Z: {obj.position[2].toFixed(2)}m
+                            </span>
+                          )}
                         </div>
                       </div>
 
-                      {/* Actions: Set as Active Avatar & Trash Icon */}
-                      <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRemoveObject?.(obj.id);
+                        }}
+                        className="flex h-7 shrink-0 items-center gap-1 rounded border border-red-400/40 bg-red-950/30 px-1.5 text-red-300 hover:border-red-400 hover:bg-red-900/70 hover:text-white transition-colors cursor-pointer"
+                        title={`Excluir ${obj.name} da sala`}
+                        aria-label={`Excluir ${obj.name} da sala`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        <span className="text-[9px] font-semibold">Excluir</span>
+                      </button>
+
+                      {/* Actions: Set as Active Avatar */}
+                      <div className="col-span-2 flex min-w-0 flex-wrap items-center gap-1">
                         {onStartSurfaceSnap && (
                           <button
                             type="button"
@@ -1475,7 +1571,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                                 onStartSurfaceSnap(obj.id);
                               }
                             }}
-                            className={`p-1 px-1.5 rounded transition-all cursor-pointer text-[10px] font-bold flex items-center gap-1 shadow-sm active:scale-95 border ${
+                            className={`p-1.5 px-2 rounded transition-all cursor-pointer text-[11px] font-bold flex items-center gap-1 shadow-sm active:scale-95 border ${
                               isSurfaceSnapMode && surfaceSnapTargetObjectId === obj.id
                                 ? 'bg-amber-400 text-black border-amber-300 ring-2 ring-amber-400 animate-pulse'
                                 : 'bg-[#d4af37]/20 hover:bg-[#d4af37] text-[#ffd700] hover:text-black border-[#d4af37]/60'
@@ -1486,7 +1582,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                             <span>
                               {isSurfaceSnapMode && surfaceSnapTargetObjectId === obj.id
                                 ? 'Fixando...'
-                                : 'Spot Superfície'}
+                                : 'Spot'}
                             </span>
                           </button>
                         )}
@@ -1498,7 +1594,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                               e.stopPropagation();
                               onAddSpotAtObject(obj.id);
                             }}
-                            className="p-1 px-1.5 rounded bg-[#ffd700]/15 hover:bg-[#ffd700] text-[#ffd700] hover:text-black border border-[#ffd700]/50 transition-all cursor-pointer text-[10px] font-bold flex items-center gap-1 shadow-sm active:scale-95"
+                            className="p-1.5 px-2 rounded bg-[#ffd700]/15 hover:bg-[#ffd700] text-[#ffd700] hover:text-black border border-[#ffd700]/50 transition-all cursor-pointer text-[11px] font-bold flex items-center gap-1 shadow-sm active:scale-95"
                             title={`Criar spot fixo nas coordenadas de "${obj.name}". O spot permanecerá mesmo se você remover o objeto depois!`}
                           >
                             <MapPin className="w-3 h-3 flex-shrink-0" />
@@ -1506,38 +1602,8 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                           </button>
                         )}
 
-                        {/* Avatar Test Checkbox & Button (Caixa de marcação para teste) */}
-                        <div className="flex flex-col items-center justify-center gap-0.5" title="Marcar este avatar para teste na sala">
-                          <label
-                            onClick={(e) => e.stopPropagation()}
-                            className="flex items-center gap-1 cursor-pointer select-none px-1 py-0.5 rounded hover:bg-black/40"
-                            title={
-                              isCustomAvatar
-                                ? 'Avatar marcado para teste (clique para desmarcar)'
-                                : 'Marcar este avatar especificamente para teste'
-                            }
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isCustomAvatar}
-                              onChange={(e) => {
-                                e.stopPropagation();
-                                if (isCustomAvatar) {
-                                  onSetCustomAvatarObjectId?.(null);
-                                } else {
-                                  if (!isAvatarType && onUpdateObjectType) {
-                                    onUpdateObjectType(obj.id, 'avatar');
-                                  }
-                                  onSetCustomAvatarObjectId?.(obj.id);
-                                }
-                              }}
-                              className="w-3 h-3 accent-[#ffd700] rounded cursor-pointer"
-                            />
-                            <span className={`text-[8px] font-bold uppercase tracking-wider ${isCustomAvatar ? 'text-[#ffd700]' : 'text-zinc-500'}`}>
-                              {isCustomAvatar ? 'Teste' : 'Testar'}
-                            </span>
-                          </label>
-
+                        {/* Avatar test toggle */}
+                        <div className="flex items-center">
                           <button
                             type="button"
                             onClick={(e) => {
@@ -1551,7 +1617,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                                 onSetCustomAvatarObjectId?.(obj.id);
                               }
                             }}
-                            className={`p-1.5 rounded transition-colors cursor-pointer text-xs ${
+                            className={`h-7 rounded border px-2 transition-colors cursor-pointer text-[10px] font-semibold flex items-center gap-1 ${
                               isCustomAvatar
                                 ? 'bg-[#d4af37] text-black ring-1 ring-[#ffd700]'
                                 : 'text-[#d4af37]/70 hover:text-[#ffd700] hover:bg-[#d4af37]/20 border border-transparent hover:border-[#d4af37]/40'
@@ -1562,28 +1628,17 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                                 : 'Definir este item como avatar interativo (controlado pelos spots)'
                             }
                           >
-                            <User className="w-3.5 h-3.5" />
+                            <User className="w-3 h-3" />
+                            <span>{isCustomAvatar ? 'Avatar ativo' : 'Testar avatar'}</span>
                           </button>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onRemoveObject?.(obj.id);
-                          }}
-                          className="p-1.5 rounded text-red-400 hover:text-red-200 hover:bg-red-950/80 border border-transparent hover:border-red-500/60 transition-colors cursor-pointer"
-                          title={`Excluir ${obj.name} da sala`}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
                       </div>
-                    </div>
 
                     {/* Type Selector (Móvel | Objeto | Avatar) */}
                     {onUpdateObjectType && (
-                      <div className="flex items-center gap-1 pt-1 border-t border-[#d4af37]/15">
-                        <span className="text-[9px] uppercase tracking-wider text-[#d4af37]/60 mr-1">
+                      <div className="col-span-2 flex flex-wrap items-center gap-1.5 border-t border-[#d4af37]/20 pt-1">
+                        <span className="text-[11px] uppercase tracking-wider text-[#d4af37]/80 mr-1">
                           Tipo:
                         </span>
                         {(['movel', 'objeto', 'avatar', 'acessorio'] as const).map((t) => {
@@ -1602,7 +1657,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                                   onSetCustomAvatarObjectId?.(obj.id);
                                 }
                               }}
-                              className={`px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider transition-colors cursor-pointer ${
+                              className={`px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider transition-colors cursor-pointer ${
                                 isActive
                                   ? t === 'avatar'
                                     ? 'bg-[#ffd700] text-black font-bold shadow-sm'
@@ -1620,8 +1675,8 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                     )}
 
                     {/* Action Button & Indicator on each placed object card */}
-                    <div className="flex items-center justify-between pt-1 border-t border-[#d4af37]/15 text-[10px]">
-                      <span className="text-zinc-400 font-mono">
+                    <div className="col-span-2 flex items-center justify-between border-t border-[#d4af37]/20 pt-1 text-xs">
+                      <span className="text-zinc-300 font-mono">
                         {obj.actions?.length || 0} action(s)
                       </span>
                       <button
@@ -1632,7 +1687,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                           setActionTargetId(obj.id);
                           setActiveTab('actions');
                         }}
-                        className="px-2 py-0.5 rounded bg-cyan-950/80 hover:bg-cyan-900 text-cyan-300 border border-cyan-400/50 font-bold flex items-center gap-1 transition-all shadow-sm active:scale-95 cursor-pointer"
+                        className="px-2.5 py-1 rounded bg-cyan-950/80 hover:bg-cyan-900 text-cyan-200 border border-cyan-400/60 text-xs font-bold flex items-center gap-1 transition-all shadow-sm active:scale-95 cursor-pointer"
                         title="Abrir e gerenciar Actions deste objeto"
                       >
                         <Zap className="w-3 h-3 text-cyan-400" />
@@ -1645,9 +1700,6 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
             )}
           </div>
 
-          <div className="pt-3 border-t border-[#d4af37]/20 text-[10px] text-[#d4af37]/70 leading-tight">
-            Clique no objeto para abrir o gizmo de ajuste fino, no ícone de avatar para torná-lo o avatar controlado na cena, ou na lixeira para removê-lo.
-          </div>
         </div>
       )}
 
@@ -1660,6 +1712,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
         const currentTestingActionId = isTestingThisObj ? testingObjectAction?.actionId : null;
 
         const handleApplyPresetAction = (preset: string) => {
+          setActionSpeedProfile([]);
           if (preset === 'girar_360') {
             setActionNameInput('Girar 360°');
             setActionTrajInput('circle_turn');
@@ -1718,18 +1771,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
           e.preventDefault();
           if (!targetObj) return;
           const finalName = actionNameInput.trim() || `Action ${targetActions.length + 1}`;
-          const motionConfig: SpotMotionConfig = {
-            enabled: true,
-            deltaPosition: actionDeltaPos,
-            deltaRotation: actionDeltaRot,
-            turnAngle: actionTurnAngle,
-            curveTrajectory: actionTrajInput,
-            curveRadius: actionCurveRadius,
-            curveHeight: actionCurveHeight,
-            speed: actionSpeed,
-            loop: actionLoop,
-            target: 'parent_object',
-          };
+          const motionConfig = buildDraftActionMotion();
 
           let newActionsList: ObjectAction[];
           if (editingActionId) {
@@ -1746,6 +1788,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
           }
 
           onUpdateObjectActions?.(targetObj.id, newActionsList);
+          onPreviewObjectAction?.(targetObj.id, null);
           setIsCreatingAction(false);
           setEditingActionId(null);
         };
@@ -1837,6 +1880,8 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                           setActionCurveRadius(0.01);
                           setActionSpeed(1.0);
                           setActionLoop(true);
+                          setActionDuration('');
+                          setActionSpeedProfile([]);
                           setIsCreatingAction(true);
                         }}
                         className="px-2.5 py-1 rounded bg-[#ffd700] hover:bg-amber-300 text-black text-[10px] font-bold flex items-center gap-1 cursor-pointer shadow-sm flex-shrink-0"
@@ -1998,15 +2043,31 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                       {/* Speed & Loop */}
                       <div className="flex items-center justify-between pt-1">
                         <div className="flex-1 mr-2">
-                          <span className="text-[10px] text-zinc-300 block">Velocidade: {actionSpeed.toFixed(1)}x</span>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-zinc-300">Velocidade base</span>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                min="0.01"
+                                max="100"
+                                step="0.01"
+                                value={actionSpeed}
+                                onChange={(e) => setActionSpeed(Math.max(0.01, Number(e.target.value) || 0.01))}
+                                className="w-16 rounded border border-[#d4af37]/40 bg-black/70 px-1 py-0.5 text-right text-[10px] text-[#ffd700]"
+                                aria-label="Velocidade base da Action"
+                              />
+                              <span className="text-[10px] text-zinc-300">x</span>
+                            </div>
+                          </div>
                           <input
                             type="range"
-                            min="0.2"
-                            max="3.0"
-                            step="0.1"
-                            value={actionSpeed}
+                            min="0.01"
+                            max="100"
+                            step="0.01"
+                            value={Math.min(actionSpeed, 20)}
                             onChange={(e) => setActionSpeed(parseFloat(e.target.value))}
                             className="w-full accent-[#ffd700]"
+                            aria-label="Ajustar velocidade base"
                           />
                         </div>
                         <label className="flex items-center gap-1.5 text-[10px] text-zinc-300 cursor-pointer pt-2">
@@ -2019,12 +2080,35 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                           <span>Loop</span>
                         </label>
                       </div>
+                      <ActionSpeedProfileFields
+                        value={actionSpeedProfile}
+                        baseSpeed={actionSpeed}
+                        onChange={setActionSpeedProfile}
+                      />
+                      <div>
+                        <label htmlFor="action-duration" className="text-[10px] text-zinc-300 block mb-0.5">
+                          Duração (segundos):
+                        </label>
+                        <input
+                          id="action-duration"
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          value={actionDuration}
+                          onChange={(e) => setActionDuration(e.target.value)}
+                          placeholder="Indefinida"
+                          className="w-full bg-black/70 border border-[#d4af37]/40 rounded px-2 py-1 text-xs text-[#ffd700] outline-none"
+                        />
+                      </div>
 
                       {/* Submit */}
                       <div className="flex items-center justify-end gap-1.5 pt-2">
                         <button
                           type="button"
                           onClick={() => {
+                            if (draftPreviewObjectId) {
+                              onPreviewObjectAction?.(draftPreviewObjectId, null);
+                            }
                             setIsCreatingAction(false);
                             setEditingActionId(null);
                           }}
@@ -2032,6 +2116,35 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                         >
                           Cancelar
                         </button>
+                        {onPreviewObjectAction && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (draftPreviewObjectId === targetObj.id) {
+                                onPreviewObjectAction(targetObj.id, null);
+                              } else {
+                                onPreviewObjectAction(targetObj.id, buildDraftActionMotion());
+                              }
+                            }}
+                            className={`px-3 py-1 rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer ${
+                              draftPreviewObjectId === targetObj.id
+                                ? 'bg-red-800 hover:bg-red-700 text-white'
+                                : 'bg-cyan-700 hover:bg-cyan-600 text-white'
+                            }`}
+                          >
+                            {draftPreviewObjectId === targetObj.id ? (
+                              <>
+                                <Square className="w-2.5 h-2.5 fill-white" />
+                                <span>Parar teste</span>
+                              </>
+                            ) : (
+                              <>
+                                <Play className="w-3 h-3 fill-white" />
+                                <span>Testar</span>
+                              </>
+                            )}
+                          </button>
+                        )}
                         <button
                           type="submit"
                           className="px-3 py-1 rounded bg-[#ffd700] hover:bg-amber-300 text-black text-[10px] font-bold cursor-pointer"
@@ -2159,7 +2272,9 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                                     setActionCurveRadius(act.motion.curveRadius !== undefined ? act.motion.curveRadius : 2.0);
                                     setActionCurveHeight(act.motion.curveHeight !== undefined ? act.motion.curveHeight : 1.5);
                                     setActionSpeed(act.motion.speed || 1.0);
+                                    setActionSpeedProfile(act.motion.speedProfile || []);
                                     setActionLoop(act.motion.loop !== false);
+                                    setActionDuration(act.motion.durationSeconds?.toString() || '');
                                     setIsCreatingAction(true);
                                   }}
                                   className="p-1 rounded text-[#d4af37] hover:text-white hover:bg-[#d4af37]/20"
@@ -2181,7 +2296,7 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
                             </div>
 
                             <span className="text-[9px] font-mono text-zinc-400">
-                              Z: {act.motion.deltaPosition[2]}m · Vel: {act.motion.speed || 1}x · Loop: {act.motion.loop ? 'Sim' : 'Não'}
+                              Z: {act.motion.deltaPosition[2]}m · Vel: {act.motion.speed || 1}x · Loop: {act.motion.loop ? 'Sim' : 'Não'} · Duração: {act.motion.durationSeconds !== undefined ? `${act.motion.durationSeconds}s` : 'Indefinida'}
                             </span>
                           </div>
                         );
@@ -2288,15 +2403,26 @@ export const CreatorSidebar: React.FC<CreatorSidebarProps> = ({
 
           {/* Top project save/restore action */}
           {onOpenProjectModal && (
-            <button
-              type="button"
-              onClick={onOpenProjectModal}
-              className="w-full py-2 px-3 rounded-lg border border-[#ffd700]/70 hover:border-[#ffd700] bg-gradient-to-r from-[#d4af37]/25 to-[#ffd700]/25 hover:from-[#d4af37]/35 hover:to-[#ffd700]/35 text-xs font-extrabold text-[#ffd700] flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm mb-2.5"
-              title="Exportar projeto para arquivo ou restaurar de onde parou"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Salvar / Restaurar Projeto</span>
-            </button>
+            <div className="flex items-center gap-2 mb-2.5">
+              <button
+                type="button"
+                onClick={() => onOpenProjectModal('export')}
+                className="flex-1 py-2 px-3 rounded-lg border border-[#ffd700]/70 hover:border-[#ffd700] bg-gradient-to-r from-[#d4af37]/25 to-[#ffd700]/25 hover:from-[#d4af37]/35 hover:to-[#ffd700]/35 text-xs font-extrabold text-[#ffd700] flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm"
+                title="Salvar projeto em arquivo"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Salvar</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenProjectModal('import')}
+                className="flex-1 py-2 px-3 rounded-lg border border-[#d4af37]/50 hover:border-[#ffd700] bg-black/40 hover:bg-[#d4af37]/15 text-xs font-semibold text-[#e8d5b5] hover:text-[#ffd700] flex items-center justify-center gap-2 cursor-pointer transition-all"
+                title="Restaurar projeto de um arquivo salvo"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>Restaurar</span>
+              </button>
+            </div>
           )}
 
           {/* Top upload button */}

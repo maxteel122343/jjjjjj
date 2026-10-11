@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { CreatorHeader } from './components/CreatorHeader';
 import { CreatorSidebar } from './components/CreatorSidebar';
@@ -229,6 +229,7 @@ export const App: React.FC = () => {
   const [isPublishItemModalOpen, setIsPublishItemModalOpen] = useState(false);
   const [isMyPublicationsModalOpen, setIsMyPublicationsModalOpen] = useState(false);
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
+  const [projectModalInitialTab, setProjectModalInitialTab] = useState<'export' | 'import'>('export');
   const [publishingItem, setPublishingItem] = useState<InventoryItem | null>(null);
   const [statusToast, setStatusToast] = useState<string | null>(null);
 
@@ -272,6 +273,7 @@ export const App: React.FC = () => {
     objectId: string;
     actionId: string;
     isPaused?: boolean;
+    motion?: SpotMotionConfig;
   } | null>(null);
 
   // Saved Actions History & Library (persisted in localStorage)
@@ -393,6 +395,15 @@ export const App: React.FC = () => {
       setTestingObjectAction({ objectId, actionId, isPaused: false });
     }
   };
+
+  const handlePreviewObjectAction = useCallback((objectId: string, motion: SpotMotionConfig | null) => {
+    setTestingObjectAction((current) => {
+      if (!motion) {
+        return current?.objectId === objectId && current.actionId === '__draft__' ? null : current;
+      }
+      return { objectId, actionId: '__draft__', motion, isPaused: false };
+    });
+  }, []);
 
   const handlePauseTestObjectAction = (objectId: string, actionId: string) => {
     setTestingObjectAction({ objectId, actionId, isPaused: true });
@@ -2026,6 +2037,12 @@ export const App: React.FC = () => {
           ...r,
           spots: r.spots.map((s) => {
             if (s.id !== id) return s;
+            if (!position.every(Number.isFinite)) return s;
+            const safePosition: [number, number, number] = [
+              parseFloat(position[0].toFixed(2)),
+              parseFloat((s.parentObjectId ? position[1] : Math.max(0, position[1])).toFixed(2)),
+              parseFloat(position[2].toFixed(2)),
+            ];
             let updatedRelativePos = s.relativePosition;
             if (s.parentObjectId) {
               const parentObj = r.placedObjects.find((o) => o.id === s.parentObjectId);
@@ -2035,7 +2052,7 @@ export const App: React.FC = () => {
                 tempParent.rotation.set(...parentObj.rotation);
                 tempParent.scale.set(...parentObj.scale);
                 tempParent.updateMatrixWorld();
-                const newLocal = tempParent.worldToLocal(new THREE.Vector3(...position));
+                const newLocal = tempParent.worldToLocal(new THREE.Vector3(...safePosition));
                 updatedRelativePos = [
                   parseFloat(newLocal.x.toFixed(3)),
                   parseFloat(newLocal.y.toFixed(3)),
@@ -2045,7 +2062,7 @@ export const App: React.FC = () => {
             }
             return {
               ...s,
-              position,
+              position: safePosition,
               relativePosition: updatedRelativePos,
             };
           }),
@@ -2068,12 +2085,14 @@ export const App: React.FC = () => {
   };
 
   const handleUpdateSpotRotationPitch = (id: string, rotationPitch: number) => {
+    if (!Number.isFinite(rotationPitch)) return;
+    const safePitch = Math.max(-90, Math.min(90, rotationPitch));
     setRooms((prev) =>
       prev.map((r) =>
         r.id === activeRoomId
           ? {
               ...r,
-              spots: r.spots.map((s) => (s.id === id ? { ...s, rotationPitch } : s)),
+              spots: r.spots.map((s) => (s.id === id ? { ...s, rotationPitch: safePitch } : s)),
             }
           : r
       )
@@ -2547,7 +2566,10 @@ export const App: React.FC = () => {
           onOpenBoundaryModal={() => setIsBoundaryModalOpen(true)}
           onPublishRoom={handlePublishRoom}
           onOpenPublicationsModal={() => setIsMyPublicationsModalOpen(true)}
-          onOpenProjectModal={() => setIsProjectModalOpen(true)}
+          onOpenProjectModal={(tab = 'export') => {
+            setProjectModalInitialTab(tab);
+            setIsProjectModalOpen(true);
+          }}
           onPlaytestRoom={handlePlaytestActiveRoom}
           onOpenAuthModal={() => setIsAuthModalOpen(true)}
           user={user}
@@ -2571,6 +2593,7 @@ export const App: React.FC = () => {
             spots={activeRoom.spots}
             placedObjects={activeRoom.placedObjects}
             selectedObjectId={selectedObjectId}
+            activeGizmoMode={activeGizmoMode}
             onSelectObjectId={(id) => {
               setSelectedObjectId(id);
               if (id) setSelectedSpotId(null);
@@ -2622,7 +2645,10 @@ export const App: React.FC = () => {
             onDeleteInventoryItem={handleDeleteInventoryItem}
             onDeleteMultipleInventoryItems={handleDeleteMultipleInventoryItems}
             onClearAllInventory={handleClearAllInventory}
-            onOpenProjectModal={() => setIsProjectModalOpen(true)}
+            onOpenProjectModal={(tab = 'export') => {
+              setProjectModalInitialTab(tab);
+              setIsProjectModalOpen(true);
+            }}
             onAddSpotAtObject={handleAddSpotAtObject}
             onStartSurfaceSnap={handleStartSurfaceSnap}
             onCancelSurfaceSnap={handleCancelSurfaceSnap}
@@ -2647,6 +2673,7 @@ export const App: React.FC = () => {
             onApplySpotCoordinatesToObject={handleApplySpotCoordinatesToObject}
             onUpdateObjectActions={handleUpdateObjectActions}
             onToggleTestObjectAction={handleToggleTestObjectAction}
+            onPreviewObjectAction={handlePreviewObjectAction}
             onPauseTestObjectAction={handlePauseTestObjectAction}
             onResumeTestObjectAction={handleResumeTestObjectAction}
             testingObjectAction={testingObjectAction}
@@ -2701,6 +2728,7 @@ export const App: React.FC = () => {
               onChangeGizmoMode={setActiveGizmoMode}
               avatarCurrentSpotId={avatarCurrentSpotId}
               onAvatarTeleport={handleAvatarTeleport}
+              onAvatarManualMove={() => setAvatarCurrentSpotId(null)}
               customAvatarObjectId={customAvatarObjectId}
               onSetCustomAvatarObjectId={setCustomAvatarObjectId}
               onUpdateObjectType={handleUpdateObjectType}
@@ -2863,6 +2891,7 @@ export const App: React.FC = () => {
   {/* Modal de Salvar, Exportar e Restaurar Projeto */}
   <ProjectSaveRestoreModal
     isOpen={isProjectModalOpen}
+    initialTab={projectModalInitialTab}
     onClose={() => setIsProjectModalOpen(false)}
     rooms={rooms}
     inventory={inventory}

@@ -16,7 +16,14 @@ import {
   Sliders,
   Box,
 } from 'lucide-react';
-import { PlacedObject, ObjectAction, SpotMotionConfig, MotionCurveTrajectory } from '../types';
+import {
+  ActionSpeedKeyframe,
+  PlacedObject,
+  ObjectAction,
+  SpotMotionConfig,
+  MotionCurveTrajectory,
+} from '../types';
+import { ActionSpeedProfileFields } from './ActionSpeedProfileFields';
 
 interface ObjectActionModalProps {
   isOpen: boolean;
@@ -55,6 +62,8 @@ export const ObjectActionModal: React.FC<ObjectActionModalProps> = ({
   const [curveHeight, setCurveHeight] = useState<number>(1.5);
   const [speed, setSpeed] = useState<number>(1.0);
   const [loop, setLoop] = useState<boolean>(true);
+  const [duration, setDuration] = useState('');
+  const [speedProfile, setSpeedProfile] = useState<ActionSpeedKeyframe[]>([]);
 
   useEffect(() => {
     if (targetObject) {
@@ -70,6 +79,7 @@ export const ObjectActionModal: React.FC<ObjectActionModalProps> = ({
   const currentActions: ObjectAction[] = currentObj?.actions || [];
 
   const handleApplyPreset = (presetType: string) => {
+    setSpeedProfile([]);
     switch (presetType) {
       case 'girar_360':
         setActionName('Girar 360°');
@@ -145,6 +155,8 @@ export const ObjectActionModal: React.FC<ObjectActionModalProps> = ({
     setCurveHeight(1.5);
     setSpeed(1.0);
     setLoop(true);
+    setDuration('');
+    setSpeedProfile([]);
     setIsEditingOrCreating(true);
   };
 
@@ -159,6 +171,8 @@ export const ObjectActionModal: React.FC<ObjectActionModalProps> = ({
     setCurveHeight(act.motion.curveHeight !== undefined ? act.motion.curveHeight : 1.5);
     setSpeed(act.motion.speed || 1.0);
     setLoop(act.motion.loop !== false);
+    setDuration(act.motion.durationSeconds?.toString() || '');
+    setSpeedProfile(act.motion.speedProfile || []);
     setIsEditingOrCreating(true);
   };
 
@@ -176,7 +190,11 @@ export const ObjectActionModal: React.FC<ObjectActionModalProps> = ({
       curveRadius,
       curveHeight,
       speed,
+      ...(speedProfile.length ? { speedProfile } : {}),
       loop,
+      ...(duration.trim() && Number.isFinite(Number(duration)) && Number(duration) > 0
+        ? { durationSeconds: Number(duration) }
+        : {}),
       target: 'parent_object',
     };
 
@@ -401,7 +419,7 @@ export const ObjectActionModal: React.FC<ObjectActionModalProps> = ({
                     <span className="text-[10px] text-zinc-400 block">Frente/Trás (Z):</span>
                     <input
                       type="number"
-                      step="0.5"
+                      step="0.01"
                       value={deltaPos[2]}
                       onChange={(e) => {
                         const val = parseFloat(e.target.value) || 0;
@@ -414,7 +432,7 @@ export const ObjectActionModal: React.FC<ObjectActionModalProps> = ({
                     <span className="text-[10px] text-zinc-400 block">Direita/Esquerda (X):</span>
                     <input
                       type="number"
-                      step="0.5"
+                      step="0.01"
                       value={deltaPos[0]}
                       onChange={(e) => {
                         const val = parseFloat(e.target.value) || 0;
@@ -427,7 +445,7 @@ export const ObjectActionModal: React.FC<ObjectActionModalProps> = ({
                     <span className="text-[10px] text-zinc-400 block">Elevador / Altura (Y):</span>
                     <input
                       type="number"
-                      step="0.5"
+                      step="0.01"
                       value={deltaPos[1]}
                       onChange={(e) => {
                         const val = parseFloat(e.target.value) || 0;
@@ -443,16 +461,30 @@ export const ObjectActionModal: React.FC<ObjectActionModalProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                 <div>
                   <label className="text-[11px] font-bold text-zinc-300 block mb-1">
-                    Velocidade: {speed.toFixed(1)}x
+                    Velocidade base: {speed.toFixed(2)}x
                   </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0.01"
+                      max="100"
+                      step="0.01"
+                      value={speed}
+                      onChange={(e) => setSpeed(Math.max(0.01, Number(e.target.value) || 0.01))}
+                      className="w-20 rounded border border-[#d4af37]/40 bg-[#161820] px-2 py-1 text-right text-xs text-[#ffd700]"
+                      aria-label="Velocidade base da Action"
+                    />
+                    <span className="text-xs text-zinc-400">x</span>
+                  </div>
                   <input
                     type="range"
-                    min="0.2"
-                    max="4.0"
-                    step="0.1"
-                    value={speed}
+                    min="0.01"
+                    max="100"
+                    step="0.01"
+                    value={Math.min(speed, 20)}
                     onChange={(e) => setSpeed(parseFloat(e.target.value))}
                     className="w-full accent-[#ffd700]"
+                    aria-label="Ajustar velocidade base"
                   />
                 </div>
 
@@ -467,6 +499,25 @@ export const ObjectActionModal: React.FC<ObjectActionModalProps> = ({
                     <span>Repetição Contínua (Loop Vai e Vem)</span>
                   </label>
                 </div>
+              </div>
+              <ActionSpeedProfileFields
+                value={speedProfile}
+                baseSpeed={speed}
+                onChange={setSpeedProfile}
+              />
+              <div>
+                <label className="text-[11px] font-bold text-zinc-300 block mb-1">
+                  Duração (segundos):
+                </label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={duration}
+                  onChange={(e) => setDuration(e.target.value)}
+                  placeholder="Indefinida"
+                  className="w-full bg-[#161820] border border-[#d4af37]/40 rounded-lg px-3 py-2 text-xs text-[#ffd700] outline-none"
+                />
               </div>
 
               {/* Submit / Cancel Buttons */}
@@ -537,7 +588,7 @@ export const ObjectActionModal: React.FC<ObjectActionModalProps> = ({
                         )}
                       </div>
                       <p className="text-xs text-zinc-400 font-mono">
-                        Deslocamento: [X: {act.motion.deltaPosition[0]}m, Y: {act.motion.deltaPosition[1]}m, Z: {act.motion.deltaPosition[2]}m] · Velocidade: {act.motion.speed || 1}x · Loop: {act.motion.loop ? 'Sim' : 'Não'}
+                        Deslocamento: [X: {act.motion.deltaPosition[0]}m, Y: {act.motion.deltaPosition[1]}m, Z: {act.motion.deltaPosition[2]}m] · Velocidade: {act.motion.speed || 1}x · Loop: {act.motion.loop ? 'Sim' : 'Não'} · Duração: {act.motion.durationSeconds !== undefined ? `${act.motion.durationSeconds}s` : 'Indefinida'}
                       </p>
                     </div>
 

@@ -27,6 +27,8 @@ import {
   Sliders,
   ChevronDown,
   ChevronUp,
+  Pin,
+  PinOff,
   Box,
   Loader2,
   RotateCcw,
@@ -46,6 +48,7 @@ import {
   Pause,
 } from 'lucide-react';
 import { MetricSizeSelectorModal } from './MetricSizeSelectorModal';
+import { getActionMotionFactor } from '../lib/actionMotion';
 import {
   METRIC_PRESETS,
   MetricPresetItem,
@@ -94,6 +97,7 @@ interface CreatorEditorCanvas3DProps {
   onChangeGizmoMode: (mode: GizmoEditMode) => void;
   avatarCurrentSpotId: string | null;
   onAvatarTeleport: (spotId: string) => void;
+  onAvatarManualMove?: () => void;
   customAvatarObjectId?: string | null;
   onSetCustomAvatarObjectId?: (id: string | null) => void;
   onUpdateObjectType?: (id: string, type: 'cenario' | 'movel' | 'objeto' | 'avatar' | 'acessorio') => void;
@@ -117,7 +121,12 @@ interface CreatorEditorCanvas3DProps {
   onUpdateSpotTags?: (spotId: string, attachmentTag?: string, connectsToTags?: string[]) => void;
   onUpdateSpotRelativeRadius?: (spotId: string, radius: number) => void;
   onConnectSpotsByTag?: (sourceSpotId: string, targetSpotId: string) => void;
-  testingObjectAction?: { objectId: string; actionId: string; isPaused?: boolean } | null;
+  testingObjectAction?: {
+    objectId: string;
+    actionId: string;
+    isPaused?: boolean;
+    motion?: SpotMotionConfig;
+  } | null;
   onExitEditor?: () => void;
 }
 
@@ -239,6 +248,7 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
   onChangeGizmoMode,
   avatarCurrentSpotId,
   onAvatarTeleport,
+  onAvatarManualMove,
   customAvatarObjectId = null,
   onSetCustomAvatarObjectId,
   onUpdateObjectType,
@@ -312,6 +322,12 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
   isAvatarModeRef.current = isAvatarMode;
   const avatarCurrentSpotIdRef = useRef<string | null>(avatarCurrentSpotId);
   avatarCurrentSpotIdRef.current = avatarCurrentSpotId;
+
+  useEffect(() => {
+    if (avatarCurrentSpotId) {
+      isAvatarManuallyMovedRef.current = false;
+    }
+  }, [avatarCurrentSpotId]);
   const showSpotsRef = useRef<boolean>(!!showSpots);
   showSpotsRef.current = !!showSpots;
   const customAvatarObjectIdRef = useRef<string | null>(customAvatarObjectId || null);
@@ -371,7 +387,6 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
   const referenceAvatarGroupRef = useRef<THREE.Group | null>(null);
   const roomBoundaryGroupRef = useRef<THREE.Group | null>(null);
   const heightIndicatorGroupRef = useRef<THREE.Group | null>(null);
-  const spotsFloorGroupRef = useRef<THREE.Group | null>(null);
   const [showReferenceAvatar, setShowReferenceAvatar] = useState<boolean>(true);
   const [isReferenceAvatarSelected, setIsReferenceAvatarSelected] = useState<boolean>(false);
   const [showMetricGrid, setShowMetricGrid] = useState<boolean>(true);
@@ -483,20 +498,31 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
 
   // Precision Inspector minimize toggle
   const [isInspectorMinimized, setIsInspectorMinimized] = useState(false);
+  const [isSpotControllerMinimized, setIsSpotControllerMinimized] = useState(false);
+  const [isSpotControllerDocked, setIsSpotControllerDocked] = useState(true);
+  const [isSpotSettingsExpanded, setIsSpotSettingsExpanded] = useState(true);
+  const [isSpotTransformExpanded, setIsSpotTransformExpanded] = useState(true);
+
+  useEffect(() => {
+    setIsSpotControllerDocked(true);
+    setIsSpotControllerMinimized(false);
+  }, [selectedSpotId]);
 
   // Screen positions for 2D UI overlays
-  const [spotGizmoScreenPos, setSpotGizmoScreenPos] = useState<{ x: number; y: number } | null>(null);
+  const [spotGizmoScreenPos, setSpotGizmoScreenPos] = useState<{ x: number; y: number; maxHeight: number } | null>(null);
   const [objectGizmoScreenPos, setObjectGizmoScreenPos] = useState<{ x: number; y: number } | null>(null);
 
   // Camera angles with wide limitless zoom
   const cameraAngleRef = useRef({ theta: 0.02, phi: 0.22, distance: 5.6 });
   const isOrbitingRef = useRef(false);
   const isTransformDraggingRef = useRef(false);
+  const isAvatarManuallyMovedRef = useRef(false);
   const lastMousePosRef = useRef({ x: 0, y: 0 });
 
   // Direct object drag on floor (Blender style)
   const isDirectDraggingObjectRef = useRef(false);
   const pausedActionFactorMapRef = useRef<Map<string, number>>(new Map());
+  const actionStartedAtRef = useRef<Map<string, { actionId: string; startedAt: number }>>(new Map());
   const directDragStartPosRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const directDragStartMouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const directDragStartRotYRef = useRef<number>(0);
@@ -517,7 +543,7 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
     const camera = new THREE.PerspectiveCamera(
       38,
       container.clientWidth / container.clientHeight,
-      0.005,
+      0.001,
       6000
     );
     cameraRef.current = camera;
@@ -689,24 +715,12 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
           let py = Number.isFinite(attached.position.y) ? parseFloat(attached.position.y.toFixed(2)) : 0;
           let pz = Number.isFinite(attached.position.z) ? parseFloat(attached.position.z.toFixed(2)) : 0;
 
-          // Clamping strictly within spot radius when testing avatar in room
-          if (isAvatarModeRef.current || currentObjId === customAvatarObjectIdRef.current) {
-            const activeSpot = spotsRef.current.find((s) => s.id === avatarCurrentSpotIdRef.current) || spotsRef.current[0];
-            if (activeSpot) {
-              const spotRadius = (activeSpot as any).relativeRadius || (activeSpot as any).radius || 0.45;
-              const rawDx = px - activeSpot.position[0];
-              const rawDz = pz - activeSpot.position[2];
-              const dist = Math.hypot(rawDx, rawDz);
-              if (dist > spotRadius && dist > 0) {
-                const ratio = spotRadius / dist;
-                px = parseFloat((activeSpot.position[0] + rawDx * ratio).toFixed(2));
-                pz = parseFloat((activeSpot.position[2] + rawDz * ratio).toFixed(2));
-                attached.position.x = px;
-                attached.position.z = pz;
-              }
-              py = parseFloat((activeSpot.position[1]).toFixed(2));
-              attached.position.y = py;
-            }
+          const currentAvatarObjectId =
+            customAvatarObjectIdRef.current ||
+            placedObjectsRef.current.find((obj) => obj.isAvatar || obj.type === 'avatar')?.id;
+          if (currentObjId === currentAvatarObjectId) {
+            isAvatarManuallyMovedRef.current = true;
+            onAvatarManualMove?.();
           }
 
           const rx = Number.isFinite(attached.rotation.x) ? parseFloat(attached.rotation.x.toFixed(2)) : 0;
@@ -732,7 +746,8 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
               attached.position.copy(worldPos);
             }
             const degY = Math.round(((THREE.MathUtils.radToDeg(attached.rotation.y) % 360) + 360) % 360);
-            const degX = Math.round(((THREE.MathUtils.radToDeg(attached.rotation.x) % 360) + 360) % 360);
+            const rawDegX = THREE.MathUtils.radToDeg(attached.rotation.x);
+            const degX = ((rawDegX + 180) % 360 + 360) % 360 - 180;
             onUpdateSpotRotationRef.current(selectedSpotIdRef.current, degY);
             onUpdateSpotRotationPitchRef.current?.(selectedSpotIdRef.current, degX);
           } else {
@@ -755,26 +770,17 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
         updateSpatialIndicatorGroup(grp, attached.position.x, attached.position.y, attached.position.z);
       }
 
+      const activeObjectId = selectedObjectIdRef.current;
+      if (activeObjectId && meshMapRef.current.get(activeObjectId) === attached) {
+        // Do not feed intermediate object transforms back through React while
+        // TransformControls is dragging. The final transform is committed on release.
+        return;
+      }
+
       if (tcRafId) cancelAnimationFrame(tcRafId);
       tcRafId = requestAnimationFrame(() => {
         tcRafId = null;
-        const targetObjGroup = selectedObjectIdRef.current ? meshMapRef.current.get(selectedObjectIdRef.current) : null;
-        if (attached && targetObjGroup && attached === targetObjGroup && selectedObjectIdRef.current) {
-          const px = Number.isFinite(attached.position.x) ? parseFloat(attached.position.x.toFixed(2)) : 0;
-          const py = Number.isFinite(attached.position.y) ? parseFloat(attached.position.y.toFixed(2)) : 0;
-          const pz = Number.isFinite(attached.position.z) ? parseFloat(attached.position.z.toFixed(2)) : 0;
-          const rx = Number.isFinite(attached.rotation.x) ? parseFloat(attached.rotation.x.toFixed(2)) : 0;
-          const ry = Number.isFinite(attached.rotation.y) ? parseFloat(attached.rotation.y.toFixed(2)) : 0;
-          const rz = Number.isFinite(attached.rotation.z) ? parseFloat(attached.rotation.z.toFixed(2)) : 0;
-          const sx = Number.isFinite(attached.scale.x) && attached.scale.x >= 0.05 ? parseFloat(attached.scale.x.toFixed(2)) : 1;
-          const sy = Number.isFinite(attached.scale.y) && attached.scale.y >= 0.05 ? parseFloat(attached.scale.y.toFixed(2)) : 1;
-          const sz = Number.isFinite(attached.scale.z) && attached.scale.z >= 0.05 ? parseFloat(attached.scale.z.toFixed(2)) : 1;
-          onUpdateObjectTransformRef.current(selectedObjectIdRef.current, {
-            position: [px, py, pz],
-            rotation: [rx, ry, rz],
-            scale: [sx, sy, sz],
-          });
-        } else if (attached && spotGizmoAnchorRef.current && attached === spotGizmoAnchorRef.current && selectedSpotIdRef.current) {
+        if (attached && spotGizmoAnchorRef.current && attached === spotGizmoAnchorRef.current && selectedSpotIdRef.current) {
           if (activeGizmoModeRef.current === 'rodar') {
             const currentSpot = spotsRef.current.find((s) => s.id === selectedSpotIdRef.current);
             if (currentSpot) {
@@ -786,7 +792,8 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
               attached.position.copy(worldPos);
             }
             const degY = Math.round(((THREE.MathUtils.radToDeg(attached.rotation.y) % 360) + 360) % 360);
-            const degX = Math.round(((THREE.MathUtils.radToDeg(attached.rotation.x) % 360) + 360) % 360);
+            const rawDegX = THREE.MathUtils.radToDeg(attached.rotation.x);
+            const degX = ((rawDegX + 180) % 360 + 360) % 360 - 180;
             onUpdateSpotRotationRef.current(selectedSpotIdRef.current, degY);
             onUpdateSpotRotationPitchRef.current?.(selectedSpotIdRef.current, degX);
           } else {
@@ -802,49 +809,9 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
     // 3D Anchor for Spot Gizmo (allows full 3D manipulation of spots in the scene)
     const spotGizmoAnchor = new THREE.Group();
     spotGizmoAnchor.name = 'spotGizmoAnchor';
-    const spotDiscGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.04, 32);
-    const spotDiscMat = new THREE.MeshBasicMaterial({
-      color: 0xd4af37,
-      transparent: true,
-      opacity: 0.65,
-    });
-    const spotDisc = new THREE.Mesh(spotDiscGeo, spotDiscMat);
-    spotDisc.position.y = 0.02;
-    spotGizmoAnchor.add(spotDisc);
-
-    // Exact luminous center point (Bullseye) at (0, 0.03, 0)
-    const centerPointGeo = new THREE.SphereGeometry(0.035, 16, 16);
-    const centerPointMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const centerPoint = new THREE.Mesh(centerPointGeo, centerPointMat);
-    centerPoint.position.set(0, 0.03, 0);
-    spotGizmoAnchor.add(centerPoint);
-
-    // Exact direction arrow originating from center and staying strictly within the 0.3m disc
-    const arrowDir = new THREE.Vector3(0, 0, -1);
-    const arrowOrigin = new THREE.Vector3(0, 0.035, 0);
-    const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowOrigin, 0.28, 0xffd700, 0.10, 0.07);
-    spotGizmoAnchor.add(arrowHelper);
-
-    // Precision crosshairs on the spot disc
-    const spotCrossGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-0.28, 0.025, 0),
-      new THREE.Vector3(0.28, 0.025, 0),
-      new THREE.Vector3(0, 0.025, -0.28),
-      new THREE.Vector3(0, 0.025, 0.28),
-    ]);
-    const spotCrossMat = new THREE.LineBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.8 });
-    const spotCross = new THREE.LineSegments(spotCrossGeo, spotCrossMat);
-    spotGizmoAnchor.add(spotCross);
-
     spotGizmoAnchor.visible = false;
     scene.add(spotGizmoAnchor);
     spotGizmoAnchorRef.current = spotGizmoAnchor;
-
-    // 3D Visual floor target discs for ALL spots in the scene
-    const spotsFloorGroup = new THREE.Group();
-    spotsFloorGroup.name = 'spotsFloorGroup';
-    scene.add(spotsFloorGroup);
-    spotsFloorGroupRef.current = spotsFloorGroup;
 
     // Avatar mesh for visitor mode
     const avatarGroup = createSimpleAvatarMesh();
@@ -1216,10 +1183,14 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
             const proj = worldPos.clone().project(cam);
             const rect = container.getBoundingClientRect();
             const sx = ((proj.x + 1) / 2) * rect.width;
-            const sy = ((-proj.y + 1) / 2) * rect.height;
+            const projectedY = ((-proj.y + 1) / 2) * rect.height;
 
             if (proj.z < 1) {
-              setSpotGizmoScreenPos({ x: sx, y: sy });
+              const horizontalMargin = Math.min(160, Math.max(0, rect.width / 2 - 8));
+              const x = Math.max(horizontalMargin, Math.min(sx, rect.width - horizontalMargin));
+              const maxHeight = Math.max(80, Math.min(320, rect.height - 16));
+              const y = Math.max(maxHeight, Math.min(projectedY, rect.height - 16));
+              setSpotGizmoScreenPos({ x, y, maxHeight });
             } else {
               setSpotGizmoScreenPos(null);
             }
@@ -1308,8 +1279,15 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
         // Resolve which spot the avatar is assigned to:
         // Priority 1: activeAvatarSpotId (explicitly selected/clicked/teleported spot)
         // Priority 2: If activeAvatarSpotId is null, strictly snap only to the single closest spot within 0.25m
-        let resolvedAvatarSpotId: string | null = activeAvatarSpotId;
-        if (!resolvedAvatarSpotId && effectiveCustomAvatarObj && currentSpots.length > 0) {
+        let resolvedAvatarSpotId: string | null = isAvatarManuallyMovedRef.current
+          ? null
+          : activeAvatarSpotId;
+        if (
+          !isAvatarManuallyMovedRef.current &&
+          !resolvedAvatarSpotId &&
+          effectiveCustomAvatarObj &&
+          currentSpots.length > 0
+        ) {
           let closestDist = Infinity;
           let closestId: string | null = null;
           for (const s of currentSpots) {
@@ -1337,6 +1315,7 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
           // 2) Spot is parented to or attached to avatar object
           const isAvatarAssignedToSpot = !!resolvedAvatarSpotId && resolvedAvatarSpotId === spot.id;
           const isSpotParentOfAvatar =
+            !isAvatarManuallyMovedRef.current &&
             !!(spot.parentObjectId && effectiveCustomAvatarId && spot.parentObjectId === effectiveCustomAvatarId);
 
           const isAvatarOnSpot = isAvatarAssignedToSpot || isSpotParentOfAvatar;
@@ -1443,7 +1422,12 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
             const currentMotion = evalTrajectoryAt(factor);
 
             // 1. Move parent 3D object if target includes parent_object
-            if (tGroup && baseObj && (cfg.target === 'parent_object' || cfg.target === 'both')) {
+            if (
+              tGroup &&
+              baseObj &&
+              (cfg.target === 'parent_object' || cfg.target === 'both') &&
+              !(isAvatarManuallyMovedRef.current && baseObj.id === effectiveCustomAvatarId)
+            ) {
               movedObjectIds.add(baseObj.id);
               tGroup.position.set(
                 baseObj.position[0] + currentMotion.offset.x,
@@ -1596,20 +1580,33 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
         // Animate any PlacedObject that has a running test action or activeActionId
         const currentTestingAction = testingObjectActionRef.current;
         currentPlacedObjects.forEach((obj) => {
-          const actToRun =
-            (currentTestingAction && currentTestingAction.objectId === obj.id
-              ? obj.actions?.find((a) => a.id === currentTestingAction.actionId)
-              : null) ||
+          const actToRun = currentTestingAction && currentTestingAction.objectId === obj.id
+            ? currentTestingAction.motion
+              ? { motion: currentTestingAction.motion }
+              : obj.actions?.find((a) => a.id === currentTestingAction.actionId)
+            : null;
+          const resolvedAction =
+            actToRun ||
             (obj.activeActionId ? obj.actions?.find((a) => a.id === obj.activeActionId) : null);
 
-          if (actToRun && actToRun.motion) {
+          if (resolvedAction && resolvedAction.motion) {
             const mGroup = meshMapRef.current.get(obj.id);
             if (mGroup && !isTransformDraggingRef.current) {
-              const cfg = actToRun.motion;
-              const spd = cfg.speed || 1.0;
-              const phase = (nowSec * spd * 2.0) % (Math.PI * 2);
+              const cfg = resolvedAction.motion;
+              const actionId = currentTestingAction?.objectId === obj.id
+                ? currentTestingAction.actionId
+                : obj.activeActionId || '__active__';
+              let actionStart = actionStartedAtRef.current.get(obj.id);
+              if (!actionStart || actionStart.actionId !== actionId) {
+                actionStart = { actionId, startedAt: nowSec };
+                actionStartedAtRef.current.set(obj.id, actionStart);
+              }
+              const elapsed = nowSec - actionStart.startedAt;
+              if (cfg.durationSeconds !== undefined && elapsed >= cfg.durationSeconds) {
+                return;
+              }
               const isPaused = currentTestingAction?.objectId === obj.id && currentTestingAction?.isPaused;
-              let factor = cfg.loop ? (1 - Math.cos(phase)) / 2 : ((nowSec * spd) % 1.0);
+              let factor = getActionMotionFactor(cfg, elapsed);
               if (isPaused) {
                 factor = pausedActionFactorMapRef.current.get(obj.id) ?? factor;
               } else {
@@ -1656,6 +1653,8 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                 obj.rotation[2] + THREE.MathUtils.degToRad(rzDeg)
               );
             }
+          } else {
+            actionStartedAtRef.current.delete(obj.id);
           }
         });
 
@@ -1663,7 +1662,7 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
         currentPlacedObjects.forEach((obj) => {
           if (!movedObjectIds.has(obj.id)) {
             const m = meshMapRef.current.get(obj.id);
-            if (m && !isTransformDraggingRef.current && selectedObjectIdRef.current !== obj.id) {
+            if (m && !isTransformDraggingRef.current) {
               if (
                 Math.abs(m.position.x - obj.position[0]) > 0.0001 ||
                 Math.abs(m.position.y - obj.position[1]) > 0.0001 ||
@@ -1879,25 +1878,18 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
 
       // 0. Camera Pan Navigation (Right-click or Middle-click drag)
       if (isPanningRef.current && cameraRef.current) {
-        if (e.buttons === 0) {
-          isPanningRef.current = false;
-          container.style.cursor = 'default';
-        } else {
-          const cam = cameraRef.current;
-          // Dynamically compute exact 1:1 screen-to-world factor at camera distance
-          const vFovRad = (cam.fov * Math.PI) / 180;
-          const visibleHeightAtDist = 2 * Math.tan(vFovRad / 2) * Math.max(0.2, cameraAngleRef.current.distance);
-          const factor = visibleHeightAtDist / Math.max(100, container.clientHeight);
+        const cam = cameraRef.current;
+        const vFovRad = (cam.fov * Math.PI) / 180;
+        const visibleHeightAtDist = 2 * Math.tan(vFovRad / 2) * Math.max(0.001, cameraAngleRef.current.distance);
+        const factor = (visibleHeightAtDist / Math.max(100, container.clientHeight)) * 1.6;
 
-          const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
-          const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
 
-          // Dragging right moves camera target left, dragging up moves target up (following cursor naturally)
-          cameraTargetRef.current.addScaledVector(right, -dx * factor);
-          cameraTargetRef.current.addScaledVector(up, dy * factor);
-          lastMousePosRef.current = { x: e.clientX, y: e.clientY };
-          return;
-        }
+        cameraTargetRef.current.addScaledVector(right, -dx * factor);
+        cameraTargetRef.current.addScaledVector(up, dy * factor);
+        lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+        return;
       }
 
       // 1. Direct object manipulation (Blender style) with 60 FPS in-place transform
@@ -2069,14 +2061,14 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
       }
     };
 
-    // Limitless smooth mouse wheel zoom with massive range (0.005m to 3000m)
+    // Smooth mouse wheel zoom with a close inspection range down to 1mm.
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       // Smooth exponential zoom proportional to distance
       const delta = Math.max(-150, Math.min(150, e.deltaY));
-      const zoomFactor = Math.exp(delta * 0.0018);
+      const zoomFactor = Math.exp(delta * 0.0022);
       cameraAngleRef.current.distance = Math.max(
-        0.005,
+        0.001,
         Math.min(3000.0, cameraAngleRef.current.distance * zoomFactor)
       );
     };
@@ -2367,6 +2359,12 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
     placedObjects.forEach((obj) => {
       const existing = meshMapRef.current.get(obj.id);
       if (existing) {
+        // TransformControls owns the live transform while dragging; React props may
+        // still contain the previous frame and must not snap the object back.
+        if (isTransformDraggingRef.current && obj.id === selectedObjectIdRef.current) {
+          return;
+        }
+
         // Fast in-place transform sync - object NEVER disappears when adjusting numbers or dragging!
         const px = Number.isFinite(obj.position[0]) ? obj.position[0] : existing.position.x;
         const py = Number.isFinite(obj.position[1]) ? obj.position[1] : existing.position.y;
@@ -2495,8 +2493,8 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
               ) {
                 objGroup.scale.set(metric.scale, metric.scale, metric.scale);
                 onUpdateObjectTransformRef.current(obj.id, {
-                  position: [obj.position[0], 0.0, obj.position[2]],
-                  rotation: obj.rotation,
+                  position: [objGroup.position.x, objGroup.position.y, objGroup.position.z],
+                  rotation: [objGroup.rotation.x, objGroup.rotation.y, objGroup.rotation.z],
                   scale: [metric.scale, metric.scale, metric.scale],
                 });
               }
@@ -2578,80 +2576,6 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
         });
       }
     });
-
-    // Synchronize 3D Visual Spot Markers as child objects on target objects (and floor)
-    meshMapRef.current.forEach((objGroup, objId) => {
-      let relSpotsGroup = objGroup.getObjectByName('relativeSpotsVisualGroup') as THREE.Group | null;
-      if (!relSpotsGroup) {
-        relSpotsGroup = new THREE.Group();
-        relSpotsGroup.name = 'relativeSpotsVisualGroup';
-        objGroup.add(relSpotsGroup);
-      }
-      while (relSpotsGroup.children.length > 0) {
-        const c = relSpotsGroup.children[0];
-        relSpotsGroup.remove(c);
-      }
-      spots.filter((s) => s.parentObjectId === objId && s.relativePosition).forEach((spot) => {
-        const m = new THREE.Group();
-        m.position.set(...spot.relativePosition!);
-        if (spot.surfaceNormal) {
-          const norm = new THREE.Vector3(...spot.surfaceNormal).normalize();
-          m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), norm);
-        }
-        const isSel = spot.id === selectedSpotId;
-        const ringGeo = new THREE.RingGeometry(0.03, 0.14, 32);
-        const ringMat = new THREE.MeshBasicMaterial({
-          color: isSel ? 0x00f0ff : 0xffd700,
-          side: THREE.DoubleSide,
-          transparent: true,
-          opacity: 0.9,
-          depthTest: false,
-        });
-        const ring = new THREE.Mesh(ringGeo, ringMat);
-        ring.renderOrder = 998;
-        m.add(ring);
-
-        const dotGeo = new THREE.CircleGeometry(0.025, 16);
-        const dotMat = new THREE.MeshBasicMaterial({
-          color: isSel ? 0x00f0ff : 0xffffff,
-          side: THREE.DoubleSide,
-          transparent: true,
-          opacity: 0.95,
-          depthTest: false,
-        });
-        const dot = new THREE.Mesh(dotGeo, dotMat);
-        dot.renderOrder = 999;
-        m.add(dot);
-        relSpotsGroup.add(m);
-      });
-    });
-
-    if (spotsFloorGroupRef.current) {
-      const flGroup = spotsFloorGroupRef.current;
-      while (flGroup.children.length > 0) {
-        flGroup.remove(flGroup.children[0]);
-      }
-      spots.filter((s) => !s.parentObjectId).forEach((spot) => {
-        const isSel = spot.id === selectedSpotId;
-        const fm = new THREE.Group();
-        fm.position.set(spot.position[0], 0.022, spot.position[2]);
-        fm.rotation.y = THREE.MathUtils.degToRad(spot.rotation);
-        if (spot.rotationPitch) {
-          fm.rotation.x = THREE.MathUtils.degToRad(spot.rotationPitch);
-        }
-        const rGeo = new THREE.RingGeometry(0.08, 0.22, 32);
-        const rMat = new THREE.MeshBasicMaterial({
-          color: isSel ? 0x00f0ff : (spot.motion?.enabled ? 0x22d3ee : 0xd4af37),
-          side: THREE.DoubleSide,
-          transparent: true,
-          opacity: 0.75,
-        });
-        const rMesh = new THREE.Mesh(rGeo, rMat);
-        rMesh.rotation.x = -Math.PI / 2;
-        fm.add(rMesh);
-        flGroup.add(fm);
-      });
-    }
 
     // Reattach TransformControls if selected object exists
     if (transformControlsRef.current) {
@@ -3021,8 +2945,12 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
   const handleUpdateObjPos = (axis: 0 | 1 | 2, val: number) => {
     if (!selectedObj) return;
     if (isNaN(val) || !isFinite(val)) return;
-    const newPos = [...selectedObj.position] as [number, number, number];
+    const objectGroup = meshMapRef.current.get(selectedObj.id);
+    const newPos = objectGroup
+      ? [objectGroup.position.x, objectGroup.position.y, objectGroup.position.z] as [number, number, number]
+      : [...selectedObj.position] as [number, number, number];
     newPos[axis] = parseFloat(val.toFixed(2));
+    objectGroup?.position.set(...newPos);
     onUpdateObjectTransform(selectedObj.id, {
       position: newPos,
       rotation: selectedObj.rotation,
@@ -3032,7 +2960,10 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
 
   const handleStepObjPos = (axis: 0 | 1 | 2, delta: number) => {
     if (!selectedObj) return;
-    const currentVal = selectedObj.position[axis];
+    const objectGroup = meshMapRef.current.get(selectedObj.id);
+    const currentVal = objectGroup
+      ? [objectGroup.position.x, objectGroup.position.y, objectGroup.position.z][axis]
+      : selectedObj.position[axis];
     if (isNaN(currentVal) || !isFinite(currentVal)) return;
     handleUpdateObjPos(axis, currentVal + delta);
   };
@@ -3143,7 +3074,7 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
   // Unlimited smooth zoom controls
   const handleZoom = (factor: number) => {
     cameraAngleRef.current.distance = Math.max(
-      0.005,
+      0.001,
       Math.min(3000.0, cameraAngleRef.current.distance * factor)
     );
   };
@@ -3437,71 +3368,6 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
         </div>
       )}
 
-      {/* Motion Test / Spot Fantasma Floating Status Pill */}
-      {(testingMotionSpotId || (selectedSpot?.motion?.enabled && !isAvatarMode)) && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 bg-[#0c1a24]/95 border-2 border-cyan-400 rounded-2xl px-5 py-2.5 shadow-[0_12px_40px_rgba(0,240,255,0.4)] backdrop-blur-md flex items-center gap-3.5 text-xs text-cyan-200 animate-fade-in ring-2 ring-cyan-400/40">
-          <div className="w-3.5 h-3.5 rounded-full bg-cyan-400 animate-ping flex-shrink-0" />
-          <div className="flex flex-col">
-            <div className="font-bold text-cyan-300 flex items-center gap-1.5 text-xs">
-              <span>👻 Spot Fantasma em Movimento</span>
-              <span className="text-[10px] bg-cyan-900/80 text-cyan-200 px-1.5 py-0.5 rounded border border-cyan-400/40 font-mono">
-                Base: {selectedSpot?.name || spots.find((s) => s.id === testingMotionSpotId)?.name || 'Spot'}
-              </span>
-            </div>
-            <span className="text-[11px] text-zinc-300">
-              O spot original fica <strong>fixo na base</strong> e o <strong>Spot Fantasma</strong> percorre o trajeto em tempo real!
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5 ml-2">
-            {/* Play / Pause Toggle Button */}
-            <button
-              type="button"
-              onClick={() => setIsTimelinePlaying((prev) => !prev)}
-              className="px-2.5 py-1 rounded-lg bg-cyan-950 hover:bg-cyan-900 text-cyan-200 text-xs font-bold cursor-pointer border border-cyan-400/60 transition-colors flex items-center gap-1 shadow-sm"
-              title={isTimelinePlaying ? 'Pausar simulação do Spot Fantasma' : 'Continuar simulação do Spot Fantasma'}
-            >
-              {isTimelinePlaying ? (
-                <>
-                  <Pause className="w-3 h-3 text-cyan-300" />
-                  <span>Pausar</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-3 h-3 text-cyan-300 fill-cyan-300" />
-                  <span>Play</span>
-                </>
-              )}
-            </button>
-
-            {/* Restart Cycle Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setTimelineProgress(0);
-                timelineProgressRef.current = 0;
-                setIsTimelinePlaying(true);
-              }}
-              className="px-2 py-1 rounded-lg bg-cyan-950/80 hover:bg-cyan-900 text-cyan-300 text-xs font-semibold cursor-pointer border border-cyan-500/40 transition-colors flex items-center gap-1"
-              title="Reiniciar percurso a partir da base"
-            >
-              <RotateCcw className="w-3 h-3" />
-              <span className="text-[10px]">Início</span>
-            </button>
-
-            {testingMotionSpotId && onToggleTestSpotMotion && (
-              <button
-                type="button"
-                onClick={() => onToggleTestSpotMotion(testingMotionSpotId)}
-                className="px-2.5 py-1 rounded-lg bg-red-950/80 hover:bg-red-900 text-red-200 text-xs font-bold cursor-pointer border border-red-500/50 transition-colors"
-              >
-                Fechar
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Floating HUD: Surface Snap Precision Cursor Adjustment */}
       {surfaceSnapTargetObjectId && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-[#121318]/95 border-2 border-amber-400 rounded-2xl px-5 py-3 shadow-[0_8px_32px_rgba(0,0,0,0.95)] backdrop-blur-md flex flex-col items-center gap-2 text-[#e8d5b5] pointer-events-auto ring-2 ring-amber-500/30">
@@ -3586,13 +3452,9 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
 
             const indicatorStyle = spotVisualConfig?.indicatorStyle || 'full';
             const arrowScale = spotVisualConfig?.arrowScale ?? 1.0;
-            const signalScale = spotVisualConfig?.signalScale ?? 1.0;
-
             const isArrowOnly = indicatorStyle === 'arrow_only';
             const isWhitePulse = indicatorStyle === 'white_pulse';
-            const isYellow = indicatorStyle === 'yellow_gold';
             const showArrow = isArrowOnly || indicatorStyle === 'full';
-            const showSignal = !isArrowOnly;
 
             const depthZIndex = Math.max(10, Math.min(30, Math.round(30 - proj.z * 5)));
             const effectiveZIndex = isAvatarHere ? 50 : isSelected ? 40 : depthZIndex;
@@ -3633,13 +3495,20 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
 
                 {/* 2. Spot Label & Status Badges */}
                 <div className="flex items-center gap-1 mb-1 flex-wrap justify-center pointer-events-none">
-                  <span className={`text-[10px] font-medium tracking-wider select-none px-1 rounded backdrop-blur-sm ${
-                    isWhitePulse
+                  <span className={`text-[10px] font-medium tracking-wider select-none px-1.5 py-0.5 rounded backdrop-blur-sm ${
+                    isSelected
+                      ? 'text-white bg-cyan-950/95 border border-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.65)] ring-1 ring-cyan-300/60'
+                      : isWhitePulse
                       ? 'text-white bg-black/80 border border-white/40'
                       : 'text-[#ffd700] bg-black/80 border border-[#d4af37]/40'
                   }`}>
                     {spot.name || `SPOT ${spot.type}`}
                   </span>
+                  {isSelected && (
+                    <span className="text-[8px] bg-cyan-300 text-slate-950 font-extrabold px-1 rounded shadow-sm">
+                      SELECIONADO
+                    </span>
+                  )}
                   {spot.parentObjectId && (
                     <span className="text-[8px] bg-amber-400 text-black font-extrabold px-1 rounded shadow-sm">
                       🔗 Relativo
@@ -3663,64 +3532,6 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                   )}
                 </div>
 
-                {/* 3. Spot Ground Signal Marker */}
-                {isArrowOnly ? (
-                  /* Minimal anchor point when creator chooses arrow_only */
-                  <div
-                    style={{ transform: `scale(${signalScale})` }}
-                    className="w-3.5 h-3.5 rounded-full border border-dashed border-white/70 bg-white/20 flex items-center justify-center shadow-sm"
-                  >
-                    <div className="w-1.5 h-1.5 rounded-full bg-white" />
-                  </div>
-                ) : spot.type === 'sentar' ? (
-                  /* Sitting Spot Signal */
-                  <div
-                    style={{ transform: `scale(${signalScale})` }}
-                    className={`rounded-full flex items-center justify-center transition-all ${
-                      isWhitePulse
-                        ? `w-8 h-8 border-2 border-white bg-white/20 animate-pulse shadow-[0_0_16px_rgba(255,255,255,0.85)] ${
-                            isSelected || isAvatarHere ? 'ring-2 ring-white scale-110' : ''
-                          }`
-                        : `w-8 h-8 border-2 border-[#d4af37] bg-[#d4af37]/20 shadow-[0_0_14px_rgba(212,175,55,0.5)] ${
-                            isSelected || isAvatarHere ? 'ring-2 ring-[#ffd700] scale-110' : ''
-                          }`
-                    }`}
-                  >
-                    {isWhitePulse ? (
-                      <div className="w-2.5 h-2.5 rounded-full bg-white shadow-[0_0_8px_#ffffff]" />
-                    ) : (
-                      <MapPin className="w-4 h-4 fill-[#d4af37] stroke-black" />
-                    )}
-                  </div>
-                ) : (
-                  /* Standing / Lying Spot Signal (Oval floor marking) */
-                  <div
-                    style={{ transform: `scale(${signalScale})` }}
-                    className={`w-28 h-12 rounded-[50%] flex items-center justify-center transition-all ${
-                      isWhitePulse
-                        ? `border-2 border-white bg-white/15 animate-pulse shadow-[0_0_18px_rgba(255,255,255,0.8)] ${
-                            isSelected || isAvatarHere ? 'ring-2 ring-white bg-white/25' : ''
-                          }`
-                        : `border-2 border-[#d4af37] bg-[#d4af37]/10 shadow-[0_0_15px_rgba(212,175,55,0.4)] ${
-                            isSelected || isAvatarHere ? 'border-[#ffd700] ring-2 ring-[#ffd700]/70 bg-[#d4af37]/25' : ''
-                          }`
-                    }`}
-                  >
-                    {/* Center Point */}
-                    <div
-                      className={`w-2.5 h-2.5 rounded-full ${
-                        isWhitePulse
-                          ? 'bg-white shadow-[0_0_8px_#ffffff] animate-ping'
-                          : 'bg-[#ffd700] shadow-[0_0_6px_#ffd700]'
-                      }`}
-                    />
-                    {isAvatarHere && (
-                      <span className={`ml-1 text-[10px] font-bold ${isWhitePulse ? 'text-white' : 'text-[#ffd700]'}`}>
-                        Avatar
-                      </span>
-                    )}
-                  </div>
-                )}
               </div>
             );
           })}
@@ -3728,32 +3539,67 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
       )}
 
       {/* FLOATING GIZMO & ADJUSTER OVER SELECTED SPOT */}
-      {showSpots && !lockSpots && selectedSpot && spotGizmoScreenPos && !isAvatarMode && (
+      {showSpots && !lockSpots && selectedSpot && !isAvatarMode &&
+        (isSpotControllerDocked || spotGizmoScreenPos) && (
         <div
-          style={{
-            left: `${spotGizmoScreenPos.x}px`,
-            top: `${spotGizmoScreenPos.y}px`,
+          style={isSpotControllerDocked ? {
+            right: '0px',
+            top: '56px',
+            bottom: isSpotControllerMinimized ? undefined : '12px',
+          } : {
+            left: `${spotGizmoScreenPos?.x ?? 12}px`,
+            top: `${spotGizmoScreenPos?.y ?? 12}px`,
+            maxHeight: `${spotGizmoScreenPos?.maxHeight ?? 320}px`,
           }}
-          className="absolute transform -translate-x-1/2 -translate-y-full z-20 flex flex-col items-center pointer-events-auto animate-fade-in"
+          className={`absolute z-20 flex flex-col pointer-events-auto animate-fade-in ${
+            isSpotControllerDocked
+              ? 'items-end'
+              : 'transform -translate-x-1/2 -translate-y-full items-center'
+          }`}
         >
           {/* Main Floating Spot Controller Box */}
           <div
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
-            className="bg-[#121317]/95 border border-[#d4af37] rounded-xl p-2.5 shadow-[0_6px_30px_rgba(0,0,0,0.9)] backdrop-blur-md flex flex-col gap-2 min-w-[280px] text-[#e8d5b5]"
+            style={{
+              height: isSpotControllerDocked && !isSpotControllerMinimized ? '100%' : undefined,
+              maxHeight: isSpotControllerDocked && !isSpotControllerMinimized ? '100%' : `${spotGizmoScreenPos?.maxHeight ?? 320}px`,
+            }}
+            className={`min-w-0 bg-[#121317]/95 border border-[#d4af37]/70 shadow-[0_6px_30px_rgba(0,0,0,0.9)] backdrop-blur-md flex flex-col overflow-hidden text-[#e8d5b5] ${
+              isSpotControllerDocked
+                ? 'w-[min(280px,calc(100vw-24px))] max-w-[min(92vw,320px)] rounded-l-xl rounded-r-none border-r-0'
+                : 'w-[min(288px,calc(100vw-24px))] max-w-[min(92vw,320px)] rounded-xl p-2.5 gap-2 overflow-y-auto'
+            }`}
           >
-            {/* Header: Spot Name and Delete */}
-            <div className="flex items-center justify-between border-b border-[#d4af37]/25 pb-1.5 text-xs">
-              <div className="flex items-center gap-1.5">
-                <MapPin className="w-3.5 h-3.5 text-[#d4af37]" />
-                <span className="font-bold text-[#ffd700] truncate max-w-[150px]">
-                  {selectedSpot.name || `Spot (${selectedSpot.type})`}
-                </span>
-                <span className="text-[9px] uppercase px-1 py-0.2 rounded border border-[#d4af37]/40 text-[#d4af37]">
-                  {selectedSpot.type}
-                </span>
+            <div className={`flex items-center justify-between border-b border-[#d4af37]/25 text-xs ${
+              isSpotControllerDocked ? 'px-3 py-2.5 bg-[#191b22] flex-shrink-0' : 'pb-1.5'
+            }`}>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Crosshair className="w-3.5 h-3.5 text-[#d4af37] flex-shrink-0" />
+                <div className="min-w-0">
+                  <div className="font-bold text-[#ffd700] truncate">
+                    {isSpotControllerDocked ? `Spot · ${selectedSpot.motion?.enabled ? 'Motion Spot' : selectedSpot.type}` : (selectedSpot.name || `Spot (${selectedSpot.type})`)}
+                  </div>
+                  {isSpotControllerDocked && (
+                    <div className="text-[10px] text-zinc-400 truncate">{selectedSpot.name || `Spot ${selectedSpot.type}`}</div>
+                  )}
+                </div>
+                {!isSpotControllerDocked && (
+                  <span className="text-[9px] uppercase px-1 py-0.2 rounded border border-[#d4af37]/40 text-[#d4af37]">
+                    {selectedSpot.type}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setIsSpotControllerDocked((docked) => !docked)}
+                  className="p-1 rounded text-[#d4af37]/80 hover:text-[#ffd700] hover:bg-[#d4af37]/15 cursor-pointer"
+                  title={isSpotControllerDocked ? 'Soltar painel para flutuar junto ao spot' : 'Fixar painel à direita da cena'}
+                  aria-label={isSpotControllerDocked ? 'Soltar painel do spot' : 'Fixar painel do spot'}
+                >
+                  {isSpotControllerDocked ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />}
+                </button>
                 {selectedSpot.motion?.enabled && onOpenTrajectoryTimeline && (
                   <button
                     type="button"
@@ -3773,11 +3619,83 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setIsSpotControllerMinimized((minimized) => !minimized)}
+                  className="p-1 rounded text-[#d4af37]/80 hover:text-[#ffd700] hover:bg-[#d4af37]/15 cursor-pointer"
+                  title={isSpotControllerMinimized ? 'Expandir controles do spot' : 'Recolher controles do spot'}
+                  aria-label={isSpotControllerMinimized ? 'Expandir controles do spot' : 'Recolher controles do spot'}
+                >
+                  {isSpotControllerMinimized ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
+            {!isSpotControllerMinimized && (
+            <div className={`flex-1 min-h-0 overflow-y-auto flex flex-col ${isSpotControllerDocked ? 'p-2.5 gap-2' : 'gap-2'}`}>
+            {isSpotControllerDocked && (
+              <section className="rounded-lg border border-white/10 bg-black/25 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setIsSpotSettingsExpanded((expanded) => !expanded)}
+                  className="w-full px-2.5 py-1.5 flex items-center justify-between bg-white/[0.03] border-b border-white/10 text-left"
+                  aria-expanded={isSpotSettingsExpanded}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+                    <span className="text-[11px] font-bold text-zinc-100">Configurações</span>
+                  </span>
+                  {isSpotSettingsExpanded ? <ChevronUp className="w-3 h-3 text-zinc-400" /> : <ChevronDown className="w-3 h-3 text-zinc-400" />}
+                </button>
+                {isSpotSettingsExpanded && <div className="p-2 space-y-1.5 text-[10px]">
+                  <div className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-2">
+                    <span className="text-zinc-500">Nome</span>
+                    <span className="truncate text-zinc-200">{selectedSpot.name || 'Spot sem nome'}</span>
+                  </div>
+                  <div className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-2">
+                    <span className="text-zinc-500">Tipo</span>
+                    <span className="truncate text-zinc-200">{selectedSpot.type === 'sentar' ? 'Sentar' : selectedSpot.type === 'deitar' ? 'Deitar' : 'Em pé'}</span>
+                  </div>
+                  <div className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-2">
+                    <span className="text-zinc-500">Objeto vinculado</span>
+                    <span className="truncate text-zinc-200">
+                      {selectedSpot.parentObjectId
+                        ? placedObjects.find((object) => object.id === selectedSpot.parentObjectId)?.name || 'Objeto'
+                        : 'Nenhum'}
+                    </span>
+                  </div>
+                  {selectedSpot.motion?.enabled && (
+                    <div className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-2">
+                      <span className="text-zinc-500">Trajetória</span>
+                      <select
+                        value={selectedSpot.motion.curveTrajectory || 'linear'}
+                        onChange={(event) => onUpdateSpotMotion?.(selectedSpot.id, {
+                          ...selectedSpot.motion!,
+                          curveTrajectory: event.target.value as NonNullable<SpotMotionConfig['curveTrajectory']>,
+                        })}
+                        className="min-w-0 w-full rounded border border-white/10 bg-[#20232b] px-1.5 py-1 text-[10px] text-zinc-200 outline-none focus:border-cyan-400"
+                        aria-label="Tipo de trajetória do Motion Spot"
+                      >
+                        <option value="linear">Linear</option>
+                        <option value="arc">Curva suave</option>
+                        <option value="circle_turn">Circular</option>
+                        <option value="spiral">Espiral</option>
+                        <option value="wave">Ondulada</option>
+                      </select>
+                    </div>
+                  )}
+                  {!selectedSpot.motion?.enabled && (
+                    <div className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-2">
+                      <span className="text-zinc-500">Trajetória</span>
+                      <span className="text-zinc-500">Motion desativado</span>
+                    </div>
+                  )}
+                </div>}
+              </section>
+            )}
+
             {/* Live Spatial Height Indicator (Perto da seta Y do Gizmo) */}
-            <div className="flex items-center justify-between bg-emerald-950/70 border border-emerald-500/50 rounded-lg px-2.5 py-1 text-[11px] font-mono text-emerald-300">
+            <div className={`flex items-center justify-between bg-emerald-950/70 border border-emerald-500/50 rounded-lg px-2.5 py-1 text-[11px] font-mono text-emerald-300 ${isSpotControllerDocked ? 'text-[10px]' : ''}`}>
               <div className="flex items-center gap-1.5">
                 <span className="text-xs">↕️</span>
                 <span className="text-[10px] text-emerald-400 uppercase font-bold">Altura do Solo:</span>
@@ -3848,6 +3766,27 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
               </div>
             )}
 
+            {!selectedSpot.motion?.enabled && onUpdateSpotMotion && (
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateSpotMotion(selectedSpot.id, {
+                    enabled: true,
+                    deltaPosition: [0, 0, 3],
+                    deltaRotation: [0, 0, 0],
+                    speed: 1,
+                    loop: true,
+                    showGhostSpot: true,
+                    target: selectedSpot.parentObjectId ? 'parent_object' : 'avatar',
+                  })
+                }
+                className="w-full py-1.5 px-2 rounded text-[10px] font-bold bg-cyan-950/70 hover:bg-cyan-900 text-cyan-200 border border-cyan-400/50 cursor-pointer transition-colors"
+                title="Ativar movimento para este spot"
+              >
+                Ativar Motion Spot
+              </button>
+            )}
+
             {/* Quick Avatar Placement Button for Still Spot (without motion) */}
             {!selectedSpot.motion?.enabled && (
               <button
@@ -3869,6 +3808,22 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
             )}
 
             {/* Mode Selector Buttons (Mover, Rodar, Elevar) */}
+            {isSpotControllerDocked && (
+              <button
+                type="button"
+                onClick={() => setIsSpotTransformExpanded((expanded) => !expanded)}
+                className="pt-2 border-t border-white/10 flex items-center justify-between text-left"
+                aria-expanded={isSpotTransformExpanded}
+              >
+                <span className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                  <span className="text-[11px] font-bold text-zinc-100">Transformação</span>
+                </span>
+                {isSpotTransformExpanded ? <ChevronUp className="w-3 h-3 text-zinc-400" /> : <ChevronDown className="w-3 h-3 text-zinc-400" />}
+              </button>
+            )}
+            {(!isSpotControllerDocked || isSpotTransformExpanded) && (
+            <>
             <div className="grid grid-cols-3 gap-1 bg-black/40 p-1 rounded-lg border border-[#d4af37]/20">
               <button
                 type="button"
@@ -3914,12 +3869,6 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
             {/* Sub-Panel: Coordinates & Fine Adjuster */}
             {activeGizmoMode === 'mover' && (
               <div className="space-y-1.5 pt-0.5">
-                <div className="text-[10px] text-[#d4af37] font-semibold flex justify-between">
-                  <span>Posição no Chão:</span>
-                  <span className="font-mono text-white text-[10px]">
-                    X: {selectedSpot.position[0].toFixed(2)}m · Z: {selectedSpot.position[2].toFixed(2)}m
-                  </span>
-                </div>
                 {/* Steppers for X and Z */}
                 <div className="grid grid-cols-2 gap-2">
                   <div className="flex items-center gap-1 bg-black/40 p-1 rounded border border-[#d4af37]/20">
@@ -4052,6 +4001,8 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                 </div>
               </div>
             )}
+            </>
+            )}
 
             {/* Relative Spot Surface Controls: Radius and Tags */}
             {selectedSpot.parentObjectId && (
@@ -4150,9 +4101,11 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                 <span>Excluir spot</span>
               </button>
             </div>
+            </div>
+            )}
           </div>
 
-          <div className="w-[1px] h-3 border-l border-dashed border-[#d4af37]/70 my-0.5" />
+          {!isSpotControllerDocked && <div className="w-[1px] h-3 border-l border-dashed border-[#d4af37]/70 my-0.5" />}
         </div>
       )}
 
@@ -4479,13 +4432,7 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
 
             {activeGizmoMode === 'mover' && (
               <div className="space-y-1 text-xs">
-                <div className="flex items-center justify-between text-[11px] text-[#ffd700]">
-                  <span>Mover no Chão:</span>
-                  <span className="font-mono text-[10px] text-[#e8d5b5]/80">
-                    X: {selectedObj.position[0].toFixed(2)}m · Z: {selectedObj.position[2].toFixed(2)}m
-                  </span>
-                </div>
-                <p className="text-[10px] text-[#e8d5b5]/60 leading-tight">
+                <p className="text-[10px] text-[#e8d5b5]/60 leading-5">
                   Arraste diretamente o objeto na cena ou use as setas 3D vermelha e azul!
                 </p>
               </div>
@@ -4563,40 +4510,37 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
       )}
 
       {/* DOCKED PRECISION NUMERIC INSPECTOR */}
-      {(selectedObj || selectedSpot) && !isAvatarMode && (
+      {selectedObj && !isAvatarMode && (
         <div
+          style={{ right: '0px', top: '56px', bottom: '12px' }}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 w-[94%] max-w-2xl bg-[#121317]/95 border border-[#d4af37]/70 rounded-xl p-3 shadow-[0_10px_35px_rgba(0,0,0,0.9)] backdrop-blur-md text-[#e8d5b5] animate-fade-in"
+          className="absolute z-30 w-[min(288px,calc(100vw-24px))] max-w-[min(92vw,320px)] bg-[#111821]/95 border border-[#d4af37]/70 rounded-l-xl rounded-r-none border-r-0 shadow-[0_10px_35px_rgba(0,0,0,0.9)] backdrop-blur-md text-[#e8d5b5] animate-fade-in flex flex-col overflow-hidden"
         >
           {/* Header */}
-          <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#d4af37]/25">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded bg-[#d4af37]/15 border border-[#d4af37]/60 flex items-center justify-center text-[#d4af37]">
-                {selectedObj ? <Box className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />}
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-[#ffd700]">
-                    {selectedObj ? selectedObj.name : selectedSpot?.name}
+          <div className="flex-shrink-0 p-2.5 border-b border-[#d4af37]/25 bg-[#111821]/95">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-6 h-6 rounded bg-[#d4af37]/15 border border-[#d4af37]/60 flex items-center justify-center text-[#d4af37] flex-shrink-0">
+                  <Box className="w-3.5 h-3.5" />
+                </div>
+                <div className="min-w-0">
+                  <span className="block text-xs font-bold text-[#ffd700] truncate" title={selectedObj.name}>
+                    {selectedObj.name}
                   </span>
-                  <span className="text-[9px] uppercase px-1.5 py-0.5 rounded border border-[#d4af37]/40 text-[#d4af37]">
-                    {selectedObj ? 'Móvel / Objeto' : `Spot ${selectedSpot?.type}`}
-                  </span>
+                  <span className="block text-[9px] uppercase text-[#d4af37]/80">Móvel / Objeto</span>
                 </div>
               </div>
-            </div>
-
-            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 flex-shrink-0">
               {selectedObj && onAddSpotAtObject && (
                 <button
                   type="button"
                   onClick={() => onAddSpotAtObject(selectedObj.id)}
-                  className="px-2.5 py-1 rounded bg-gradient-to-r from-[#d4af37] via-[#ffd700] to-[#e2bd44] hover:brightness-110 text-black text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-md active:scale-95"
+                  className="p-1.5 rounded bg-gradient-to-r from-[#d4af37] via-[#ffd700] to-[#e2bd44] hover:brightness-110 text-black transition-all cursor-pointer shadow-md active:scale-95"
                   title={`Cria um spot automático exatamente nas coordenadas e rotação de "${selectedObj.name}". O spot permanecerá fixo mesmo se o objeto for removido!`}
+                  aria-label="Inserir spot neste objeto"
                 >
                   <MapPin className="w-3.5 h-3.5 fill-black" />
-                  <span>+ Inserir Spot no Objeto</span>
                 </button>
               )}
 
@@ -4607,10 +4551,11 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                     const targetSpot = selectedSpot || spots[0];
                     if (targetSpot) onCaptureObjectCoordinatesToSpot(targetSpot.id, selectedObj.id);
                   }}
-                  className="px-2 py-1 rounded bg-black/60 hover:bg-[#d4af37]/20 border border-[#d4af37]/50 text-[#ffd700] text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-sm active:scale-95"
+                  className="p-1.5 rounded bg-black/60 hover:bg-[#d4af37]/20 border border-[#d4af37]/50 text-[#ffd700] transition-all cursor-pointer shadow-sm active:scale-95"
                   title="Captura a rotação e a escala deste objeto para o spot, permitindo testar a room com coordenadas exatas"
+                  aria-label="Gravar rotação e escala no spot"
                 >
-                  <span>📐 Gravar Rotação/Escala no Spot</span>
+                  <Ruler className="w-3.5 h-3.5" />
                 </button>
               )}
 
@@ -4623,18 +4568,20 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                     onRemoveSpot(selectedSpot.id);
                   }
                 }}
-                className="px-2.5 py-1 rounded bg-red-950/70 border border-red-500/70 text-red-300 hover:text-white hover:bg-red-800 text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="p-1.5 rounded bg-red-950/70 border border-red-500/70 text-red-300 hover:text-white hover:bg-red-800 transition-colors cursor-pointer"
                 title="Excluir da sala"
+                aria-label="Excluir da sala"
               >
                 <Trash2 className="w-3.5 h-3.5 text-red-400" />
-                <span>Excluir</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => setIsInspectorMinimized(!isInspectorMinimized)}
-                className="p-1 text-[#d4af37]/70 hover:text-[#d4af37] cursor-pointer"
+                onClick={() => setIsInspectorMinimized((minimized) => !minimized)}
+                className="p-1.5 rounded text-[#d4af37]/80 hover:text-[#ffd700] hover:bg-[#d4af37]/15 cursor-pointer"
                 title={isInspectorMinimized ? 'Expandir painel' : 'Minimizar painel'}
+                aria-label={isInspectorMinimized ? 'Expandir painel do objeto' : 'Minimizar painel do objeto'}
+                aria-expanded={!isInspectorMinimized}
               >
                 {isInspectorMinimized ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               </button>
@@ -4645,17 +4592,19 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
                   onSelectObject(null);
                   onSelectSpot(null);
                 }}
-                className="p-1 text-[#d4af37]/70 hover:text-[#d4af37] cursor-pointer ml-1"
+                className="p-1.5 rounded text-zinc-400 hover:text-white hover:bg-white/10 cursor-pointer"
                 title="Fechar seleção"
+                aria-label="Fechar inspetor do objeto"
               >
                 <X className="w-4 h-4" />
               </button>
+                </div>
+              </div>
             </div>
-          </div>
 
           {/* Body: Direct Numeric Inputs & Steppers */}
           {!isInspectorMinimized && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 text-xs">
+            <div className="flex-1 min-h-0 overflow-y-auto p-2.5 grid grid-cols-1 gap-2 text-xs">
               {/* Column 1: Posição X, Y, Z */}
               <div className="p-2 rounded-lg bg-black/40 border border-[#d4af37]/20 space-y-1.5">
                 <span className="text-[10px] uppercase font-bold text-[#d4af37] tracking-wider block">
@@ -5046,9 +4995,9 @@ export const CreatorEditorCanvas3D: React.FC<CreatorEditorCanvas3DProps> = ({
       <div className="absolute bottom-4 right-4 z-20 flex flex-col gap-1.5">
         <button
           type="button"
-          onClick={() => handleZoom(0.65)}
+          onClick={() => handleZoom(0.5)}
           className="w-8 h-8 rounded-lg bg-[#141519]/90 border border-[#d4af37]/50 hover:border-[#d4af37] text-[#ffd700] hover:bg-[#d4af37]/25 flex items-center justify-center cursor-pointer shadow-md transition-all active:scale-95"
-          title="Aproximar Zoom (Super Detalhes - Sem Limites)"
+          title="Aproximar Zoom (detalhes ampliados)"
         >
           <ZoomIn className="w-4 h-4" />
         </button>

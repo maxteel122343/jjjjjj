@@ -5,6 +5,11 @@ export type SpotType = 'pe' | 'sentar' | 'deitar';
 
 export type MotionCurveTrajectory = 'linear' | 'arc' | 'circle_turn' | 'spiral' | 'wave';
 
+export interface ActionSpeedKeyframe {
+  timeSeconds: number;
+  speed: number;
+}
+
 export interface SpotMotionConfig {
   enabled: boolean;
   deltaPosition: [number, number, number]; // [dx, dy, dz] em metros (ex: [0, 0, 3] = frente 3m, [0, 2, 0] = sobe 2m)
@@ -15,8 +20,10 @@ export interface SpotMotionConfig {
   curveTrajectory?: MotionCurveTrajectory; // 'linear' | 'arc' | 'circle_turn' | 'spiral' | 'wave'
   curveHeight?: number; // Altura da curva em arco em metros (ex: 1.5m)
   curveRadius?: number; // Raio para fazer a volta em metros (ex: 2.0m)
-  speed: number; // velocidade numérica (0.2x a 5.0x)
+  speed: number; // velocidade base em ciclos por segundo
+  speedProfile?: ActionSpeedKeyframe[]; // até cinco pontos de velocidade interpolados ao longo do tempo
   loop: boolean; // true = loop contínuo vai e vem; false = executa uma vez (one-shot)
+  durationSeconds?: number; // duração opcional da execução; omitido = indefinida
   target: 'parent_object' | 'avatar' | 'both'; // objeto, avatar ou ambos juntos
   showGhostSpot?: boolean; // Exibir Spot Fantasma em movimento contínuo (padrão true)
   label?: string;

@@ -27,7 +27,7 @@ interface CreatorHeaderProps {
   onOpenBoundaryModal: () => void;
   onPublishRoom: () => void;
   onOpenPublicationsModal?: () => void;
-  onOpenProjectModal?: () => void;
+  onOpenProjectModal?: (tab?: 'export' | 'import') => void;
   onPlaytestRoom?: () => void;
   onOpenAuthModal: () => void;
   user: CreatorUser | null;
@@ -69,8 +69,9 @@ export const CreatorHeader: React.FC<CreatorHeaderProps> = ({
   const activeRoom = rooms.find((r) => r.id === activeRoomId) || rooms[0];
 
   return (
-    <header className="w-full bg-[#121317]/95 border-b border-[#d4af37]/40 px-3 md:px-4 py-2.5 flex items-center justify-between text-[#e8d5b5] z-30 select-none font-sans shadow-md gap-2">
-      {/* Left side: Sair do Editor (Priority) + Brand + Room tabs */}
+    <header className="w-full bg-[#10151e] border-b border-[#d4af37]/35 text-[#e8d5b5] z-30 select-none font-sans shadow-md">
+      <div className="min-h-[52px] px-3 md:px-4 py-2 flex items-center justify-between gap-2">
+      {/* Top row: exit, editor identity, and global controls */}
       <div className="flex items-center gap-2 md:gap-3 flex-shrink-0">
         {/* Sair do Editor Button (Always visible on the left bar so user NEVER gets pushed off screen!) */}
         {onExitEditor && (
@@ -88,56 +89,17 @@ export const CreatorHeader: React.FC<CreatorHeaderProps> = ({
         {/* Brand */}
         <div className="hidden sm:flex items-center gap-2 flex-shrink-0">
           <Box className="w-4 h-4 text-[#ffd700] stroke-[2]" />
-          <h1 className="text-xs md:text-sm font-bold tracking-wide text-white whitespace-nowrap">
-            MODO CRIADOR
+          <h1 className="text-sm md:text-base font-semibold tracking-wide text-white whitespace-nowrap">
+            3D Social Lounge
           </h1>
         </div>
 
         <div className="h-4 w-[1px] bg-[#d4af37]/40 hidden md:block flex-shrink-0" />
 
-        {/* Room Tabs: Room A | Room B | + Nova room */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          {rooms.map((room, idx) => {
-            const isActive = room.id === activeRoomId;
-            const letter = String.fromCharCode(65 + idx);
-            return (
-              <button
-                key={room.id}
-                type="button"
-                onClick={() => onSelectRoom(room.id)}
-                className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer border ${
-                  isActive
-                    ? 'border-[#ffd700] bg-[#ffd700] text-black shadow-sm'
-                    : 'border-[#d4af37]/40 bg-black/60 text-[#e8d5b5] hover:border-[#ffd700] hover:text-[#ffd700]'
-                }`}
-              >
-                Room {letter}
-              </button>
-            );
-          })}
-
-          <button
-            type="button"
-            onClick={onAddNewRoom}
-            className="px-2 py-1 text-xs font-bold rounded-lg border border-[#d4af37]/40 hover:border-[#ffd700] bg-black/50 text-[#ffd700] hover:bg-[#d4af37]/20 transition-all cursor-pointer flex items-center gap-1"
-            title="Criar nova room"
-          >
-            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span className="hidden sm:inline">Nova room</span>
-          </button>
-        </div>
-
-        {/* Active room name indicator */}
-        <div className="hidden lg:flex items-center gap-1.5 text-xs text-amber-300 font-bold pl-1">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="truncate max-w-[130px]">
-            {activeRoom.name}
-          </span>
-        </div>
       </div>
 
       {/* Right side: Controls with horizontal scroll safety */}
-      <div className="flex items-center gap-2 md:gap-3 overflow-x-auto no-scrollbar py-0.5">
+      <div className="flex items-center gap-2 md:gap-3 overflow-x-auto no-scrollbar py-0.5 min-w-0">
         {/* Toggle MODO AVATAR */}
         <div className="flex items-center gap-2">
           <User className="w-3.5 h-3.5 text-[#d4af37]/80 hidden sm:inline" />
@@ -268,57 +230,88 @@ export const CreatorHeader: React.FC<CreatorHeaderProps> = ({
           </button>
         )}
 
-        {/* SALVAR & RESTAURAR PROJETO (.json / .3dproj) */}
-        {onOpenProjectModal && (
+      </div>
+      </div>
+
+      {/* Room selector row */}
+      <div className="min-h-10 px-3 md:px-4 py-1.5 border-t border-white/5 bg-black/20 flex items-center gap-2 overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {rooms.map((room, idx) => {
+            const isActive = room.id === activeRoomId;
+            const defaultName = ['Lobby Principal', 'Sala de Reuniões', 'Chill Lounge'][idx];
+            return (
+              <button
+                key={room.id}
+                type="button"
+                onClick={() => onSelectRoom(room.id)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer border ${
+                  isActive
+                    ? 'border-[#ffd700] bg-[#d4af37]/15 text-[#ffd700] shadow-sm'
+                    : 'border-white/10 bg-[#151b25] text-[#cbd5e1] hover:border-[#d4af37]/60 hover:text-[#ffd700]'
+                }`}
+              >
+                {defaultName || room.name}
+              </button>
+            );
+          })}
           <button
             type="button"
-            onClick={onOpenProjectModal}
-            className="px-2.5 py-1 rounded border border-[#ffd700]/70 hover:border-[#ffd700] bg-gradient-to-r from-[#d4af37]/20 to-[#ffd700]/20 hover:from-[#d4af37]/35 hover:to-[#ffd700]/35 text-xs font-bold text-[#ffd700] transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
-            title="Salvar o projeto em arquivo (.json) ou restaurar exatamente de onde parou"
+            onClick={onAddNewRoom}
+            className="w-8 h-8 text-sm font-bold rounded-md border border-white/10 hover:border-[#ffd700]/70 bg-[#151b25] text-[#ffd700] hover:bg-[#d4af37]/15 transition-all cursor-pointer flex items-center justify-center"
+            title="Criar nova sala"
+            aria-label="Criar nova sala"
           >
-            <Save className="w-3.5 h-3.5 text-[#ffd700]" />
-            <span className="hidden sm:inline">Salvar / Restaurar</span>
-            <span className="sm:hidden">Projeto</span>
+            <Plus className="w-4 h-4 stroke-[2.5]" />
           </button>
-        )}
-
-        {/* MINHAS PUBLICAÇÕES */}
-        {onOpenPublicationsModal && (
+        </div>
+        <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+          {onOpenProjectModal && (
+            <>
+              <button
+                type="button"
+                onClick={() => onOpenProjectModal('export')}
+                className="px-3 py-1.5 rounded-md border border-[#d4af37]/60 hover:border-[#ffd700] bg-[#171d28] text-xs font-semibold text-[#ffd700] hover:bg-[#d4af37]/15 transition-colors flex items-center gap-1.5 cursor-pointer"
+                title="Salvar projeto em arquivo"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Salvar</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenProjectModal('import')}
+                className="px-3 py-1.5 rounded-md border border-white/10 hover:border-[#d4af37]/60 bg-[#151b25] text-xs font-medium text-[#e8d5b5] hover:text-[#ffd700] transition-colors flex items-center gap-1.5 cursor-pointer"
+                title="Restaurar projeto de um arquivo salvo"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>Restaurar</span>
+              </button>
+            </>
+          )}
+          {onOpenPublicationsModal && (
+            <button
+              type="button"
+              onClick={onOpenPublicationsModal}
+              className="px-3 py-1.5 rounded-md border border-white/10 hover:border-[#d4af37]/60 bg-[#151b25] text-xs font-medium text-[#e8d5b5] hover:text-[#ffd700] transition-colors flex items-center gap-1.5 cursor-pointer"
+              title="Ver e gerenciar suas publicações"
+            >
+              <Layers className="w-3.5 h-3.5 text-[#ffd700]" />
+              <span>Minhas Publicações</span>
+            </button>
+          )}
           <button
             type="button"
-            onClick={onOpenPublicationsModal}
-            className="px-2.5 py-1 rounded-lg border border-[#ffd700]/70 hover:border-[#ffd700] bg-black/60 hover:bg-[#d4af37]/20 text-xs font-bold text-amber-200 hover:text-[#ffd700] transition-all flex items-center gap-1.5 cursor-pointer shadow-sm flex-shrink-0"
-            title="Ver e gerenciar salas e itens publicados na vitrine ou editar novamente"
+            onClick={onPublishRoom}
+            className="px-3 py-1.5 rounded-md border border-violet-400/50 bg-violet-600 hover:bg-violet-500 text-xs font-semibold text-white transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
+            title="Publicar sala na vitrine"
           >
-            <Layers className="w-3.5 h-3.5 text-[#ffd700]" />
-            <span className="hidden sm:inline">Minhas Publicações</span>
-            <span className="sm:hidden">Publicações</span>
+            <Upload className="w-3.5 h-3.5" />
+            <span>Publicar na vitrine</span>
           </button>
-        )}
-
-        {/* PUBLICAR NA VITRINE matching user screenshot */}
-        <button
-          type="button"
-          onClick={onPublishRoom}
-          className="px-3 py-1 rounded border border-[#d4af37] hover:border-[#ffd700] bg-[#d4af37]/10 hover:bg-[#d4af37]/25 text-xs font-semibold text-[#ffd700] transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
-        >
-          <Upload className="w-3.5 h-3.5 text-[#d4af37]" />
-          <span className="uppercase tracking-wider text-[11px]">Publicar na vitrine</span>
-        </button>
-
-        {/* SAIR DO MODO EDITOR (Retorna para a tela de Rooms / Lobby) */}
-        {onExitEditor && (
-          <button
-            type="button"
-            onClick={onExitEditor}
-            className="px-3 py-1 rounded border border-amber-500/70 hover:border-amber-400 bg-amber-950/60 hover:bg-amber-900/80 text-xs font-semibold text-amber-200 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
-            title="Sair do modo editor e voltar para a tela de rooms"
-          >
-            <LogOut className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden sm:inline">Sair do Editor</span>
-            <span className="sm:hidden">Sair</span>
-          </button>
-        )}
+        </div>
+        <div className="ml-auto hidden md:flex items-center gap-1.5 text-xs text-emerald-300 font-medium">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          <span>{activeRoom.name}</span>
+        </div>
       </div>
     </header>
   );
